@@ -2,136 +2,149 @@ package yomo
 
 import (
 	"crypto/tls"
+	"log/slog"
 
-	"github.com/lucas-clemente/quic-go"
+	"github.com/quic-go/quic-go"
 	"github.com/yomorun/yomo/core"
-	"github.com/yomorun/yomo/core/frame"
-	"github.com/yomorun/yomo/core/log"
+	"github.com/yomorun/yomo/core/router"
 )
 
-const (
-	// DefaultZipperAddr is the default address of downstream zipper.
-	DefaultZipperAddr = "localhost:9000"
+type (
+	// SourceOption is option for the Source.
+	SourceOption core.ClientOption
+
+	// SfnOption is option for the SFN.
+	SfnOption core.ClientOption
 )
 
-// Option is a function that applies a YoMo-Client option.
-type Option func(o *Options)
+// SourceOption Options.
+var (
+	// WithCredential sets the credential method for the Source.
+	WithCredential = func(payload string) SourceOption { return SourceOption(core.WithCredential(payload)) }
 
-// Options are the options for YoMo
-type Options struct {
-	ZipperAddr string // target Zipper endpoint address
-	// ZipperListenAddr     string // Zipper endpoint address
-	ZipperWorkflowConfig string // Zipper workflow file
-	MeshConfigURL        string // meshConfigURL is the URL of edge-mesh config
-	ServerOptions        []core.ServerOption
-	ClientOptions        []core.ClientOption
-	QuicConfig           *quic.Config
-	TLSConfig            *tls.Config
-	Logger               log.Logger
-}
+	// WithSourceTLSConfig sets tls config for the Source.
+	WithSourceTLSConfig = func(tc *tls.Config) SourceOption { return SourceOption(core.WithClientTLSConfig(tc)) }
 
-// WithZipperAddr return a new options with ZipperAddr set to addr.
-func WithZipperAddr(addr string) Option {
-	return func(o *Options) {
-		o.ZipperAddr = addr
-	}
-}
+	// WithSourceQuicConfig sets quic config for the Source.
+	WithSourceQuicConfig = func(qc *quic.Config) SourceOption { return SourceOption(core.WithClientQuicConfig(qc)) }
 
-// // WithZipperListenAddr return a new options with ZipperListenAddr set to addr.
-// func WithZipperListenAddr(addr string) Option {
-// 	return func(o *options) {
-// 		o.ZipperListenAddr = addr
-// 	}
-// }
+	// WithLogger sets logger for the Source.
+	WithLogger = func(l *slog.Logger) SourceOption { return SourceOption(core.WithLogger(l)) }
 
-// TODO: WithWorkflowConfig
+	// WithSourceReConnect makes source Connect until success, unless authentication fails.
+	WithSourceReConnect = func() SourceOption { return SourceOption(core.WithReConnect()) }
+)
 
-// WithMeshConfigURL sets the initial edge-mesh config URL for the YoMo-Zipper.
-func WithMeshConfigURL(url string) Option {
-	return func(o *Options) {
-		o.MeshConfigURL = url
-	}
-}
+// Sfn Options.
+var (
+	// WithSfnCredential sets the credential method for the Sfn.
+	WithSfnCredential = func(payload string) SfnOption { return SfnOption(core.WithCredential(payload)) }
 
-// WithTLSConfig sets the TLS configuration for the client.
-func WithTLSConfig(tc *tls.Config) Option {
-	return func(o *Options) {
-		o.TLSConfig = tc
-	}
-}
+	// WithSfnTLSConfig sets tls config for the Sfn.
+	WithSfnTLSConfig = func(tc *tls.Config) SfnOption { return SfnOption(core.WithClientTLSConfig(tc)) }
 
-// WithQuicConfig sets the QUIC configuration for the client.
-func WithQuicConfig(qc *quic.Config) Option {
-	return func(o *Options) {
-		o.QuicConfig = qc
-	}
-}
+	// WithSfnQuicConfig sets quic config for the Sfn.
+	WithSfnQuicConfig = func(qc *quic.Config) SfnOption { return SfnOption(core.WithClientQuicConfig(qc)) }
 
-// WithClientOptions returns a new options with opts.
-func WithClientOptions(opts ...core.ClientOption) Option {
-	return func(o *Options) {
-		o.ClientOptions = opts
-	}
-}
+	// WithSfnLogger sets logger for the Sfn.
+	WithSfnLogger = func(l *slog.Logger) SfnOption { return SfnOption(core.WithLogger(l)) }
 
-// WithServerOptions returns a new options with opts.
-func WithServerOptions(opts ...core.ServerOption) Option {
-	return func(o *Options) {
-		o.ServerOptions = opts
-	}
-}
+	// WithSfnReConnect makes sfn Connect until success, unless authentication fails.
+	WithSfnReConnect = func() SfnOption { return SfnOption(core.WithReConnect()) }
 
-// WithAuth sets the server authentication method (used by server)
-func WithAuth(name string, args ...string) Option {
-	return func(o *Options) {
-		o.ServerOptions = append(
-			o.ServerOptions,
-			core.WithAuth(name, args...),
-		)
-	}
-}
-
-// WithCredential sets the client credential method (used by client)
-func WithCredential(payload string) Option {
-	return func(o *Options) {
-		o.ClientOptions = append(
-			o.ClientOptions,
-			core.WithCredential(payload),
-		)
-	}
-}
-
-// WithObserveDataTags sets client data tag list.
-func WithObserveDataTags(tags ...frame.Tag) Option {
-	return func(o *Options) {
-		o.ClientOptions = append(
-			o.ClientOptions,
-			core.WithObserveDataTags(tags...),
-		)
-	}
-}
-
-// WithLogger sets the client logger
-func WithLogger(logger log.Logger) Option {
-	return func(o *Options) {
-		o.ClientOptions = append(
-			o.ClientOptions,
-			core.WithLogger(logger),
-		)
-	}
-}
-
-// NewOptions creates a new options for YoMo-Client.
-func NewOptions(opts ...Option) *Options {
-	options := &Options{}
-
-	for _, o := range opts {
-		o(options)
+	// WithSfnAIFunctionDefinition sets AI function definition for the Sfn.
+	WithSfnAIFunctionDefinition = func(description string, inputModel any) SfnOption {
+		return SfnOption(core.WithAIFunctionDefinition(description, inputModel))
 	}
 
-	if options.ZipperAddr == "" {
-		options.ZipperAddr = DefaultZipperAddr
+	// WithAIFunctionJsonDefinition sets AI function definition for the Sfn in the form of jsonschema string.
+	WithAIFunctionJsonDefinition = func(jsonschema string) SfnOption {
+		return SfnOption(core.WithAIFunctionJsonDefinition(jsonschema))
 	}
 
-	return options
+	// DisableOtelTrace determines whether to disable otel trace.
+	DisableOtelTrace = func() SfnOption { return SfnOption(core.DisableOtelTrace()) }
+)
+
+// ClientOption is option for the upstream Zipper.
+type ClientOption = core.ClientOption
+
+type zipperOptions struct {
+	serverOption []core.ServerOption
+	clientOption []ClientOption
 }
+
+// ZipperOption is option for the Zipper.
+type ZipperOption func(*zipperOptions)
+
+var (
+	// WithAuth sets the zipper authentication method.
+	WithAuth = func(name string, args ...string) ZipperOption {
+		return func(zo *zipperOptions) {
+			zo.serverOption = append(zo.serverOption, core.WithAuth(name, args...))
+		}
+	}
+
+	// WithZipperTLSConfig sets the TLS configuration for the zipper.
+	WithZipperTLSConfig = func(tc *tls.Config) ZipperOption {
+		return func(zo *zipperOptions) {
+			zo.serverOption = append(zo.serverOption, core.WithServerTLSConfig(tc))
+		}
+	}
+
+	// WithZipperQuicConfig sets the QUIC configuration for the zipper.
+	WithZipperQuicConfig = func(qc *quic.Config) ZipperOption {
+		return func(zo *zipperOptions) {
+			zo.serverOption = append(zo.serverOption, core.WithServerQuicConfig(qc))
+		}
+	}
+
+	// WithZipperLogger sets logger for the zipper.
+	WithZipperLogger = func(l *slog.Logger) ZipperOption {
+		return func(zo *zipperOptions) {
+			zo.serverOption = append(zo.serverOption, core.WithServerLogger(l))
+		}
+	}
+
+	// WithRouter sets router for the zipper.
+	WithRouter = func(r router.Router) ZipperOption {
+		return func(zo *zipperOptions) {
+			zo.serverOption = append(zo.serverOption, core.WithRouter(r))
+		}
+	}
+
+	// WithConnector sets connector for the zipper.
+	WithConnector = func(c core.Connector) ZipperOption {
+		return func(zo *zipperOptions) {
+			zo.serverOption = append(zo.serverOption, core.WithConnector(c))
+		}
+	}
+
+	// WithVersionNegotiateFunc sets the version negotiate function for the zipper
+	WithVersionNegotiateFunc = func(f core.VersionNegotiateFunc) ZipperOption {
+		return func(zo *zipperOptions) {
+			zo.serverOption = append(zo.serverOption, core.WithVersionNegotiateFunc(f))
+		}
+	}
+
+	// WithUpstreamOption provides upstream zipper options for Zipper.
+	WithUpstreamOption = func(opts ...ClientOption) ZipperOption {
+		return func(o *zipperOptions) {
+			o.clientOption = opts
+		}
+	}
+
+	// WithZipperConnMiddleware sets conn middleware for the zipper.
+	WithZipperConnMiddleware = func(mw ...core.ConnMiddleware) ZipperOption {
+		return func(o *zipperOptions) {
+			o.serverOption = append(o.serverOption, core.WithConnMiddleware(mw...))
+		}
+	}
+
+	// WithZipperFrameMiddleware sets frame middleware for the zipper.
+	WithZipperFrameMiddleware = func(mw ...core.FrameMiddleware) ZipperOption {
+		return func(o *zipperOptions) {
+			o.serverOption = append(o.serverOption, core.WithFrameMiddleware(mw...))
+		}
+	}
+)

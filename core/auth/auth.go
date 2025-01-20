@@ -1,6 +1,13 @@
+// Package auth provides authentication.
 package auth
 
-import "strings"
+import (
+	"errors"
+	"strings"
+
+	"github.com/yomorun/yomo/core/frame"
+	"github.com/yomorun/yomo/core/metadata"
+)
 
 var (
 	auths = make(map[string]Authentication)
@@ -10,8 +17,8 @@ var (
 type Authentication interface {
 	// Init authentication initialize arguments
 	Init(args ...string)
-	// Authenticate authentication client's credential
-	Authenticate(payload string) bool
+	// Authenticate the client's credential
+	Authenticate(payload string) (metadata.M, error)
 	// Name authentication name
 	Name() string
 }
@@ -56,4 +63,24 @@ func (c *Credential) Payload() string {
 // Name client credential name
 func (c *Credential) Name() string {
 	return c.name
+}
+
+// Authenticate finds the authentication strategy in `auths` and then authenticates the Object.
+//
+// If `auths` is nil or empty, It returns true, means authentication is not required.
+func Authenticate(auths map[string]Authentication, hf *frame.HandshakeFrame) (metadata.M, error) {
+	if auths == nil || len(auths) <= 0 {
+		return metadata.M{}, nil
+	}
+
+	if hf == nil {
+		return metadata.M{}, errors.New("handshake frame cannot be nil")
+	}
+
+	auth, ok := auths[hf.AuthName]
+	if !ok {
+		return metadata.M{}, errors.New("authentication not found: " + hf.AuthName)
+	}
+
+	return auth.Authenticate(hf.AuthPayload)
 }

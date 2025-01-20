@@ -1,3 +1,4 @@
+// Package file provides file operations
 package file
 
 import (
@@ -119,9 +120,10 @@ func GetBinContents(path string) []byte {
 	return data
 }
 
+// IsExec check is executable file
 func IsExec(filename string) bool {
 	ext := strings.ToLower(filepath.Ext(filename))
-	if ext == ".yomo" || ext == ".exe" {
+	if ext == ".yomo" || ext == ".exe" || ext == ".wasm" {
 		return true
 	}
 	return false

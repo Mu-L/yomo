@@ -3,24 +3,29 @@ package wasm
 
 import (
 	"log"
+	"os"
 	"sync"
 
 	"github.com/yomorun/yomo"
-	"github.com/yomorun/yomo/cli/serverless"
-	"github.com/yomorun/yomo/core/frame"
+	cli "github.com/yomorun/yomo/cli/serverless"
+	pkglog "github.com/yomorun/yomo/pkg/log"
+	"github.com/yomorun/yomo/serverless"
 )
 
 // wasmServerless will run serverless functions from the given compiled WebAssembly files.
 type wasmServerless struct {
-	runtime     Runtime
-	name        string
-	zipperAddrs []string
-	observed    []frame.Tag
-	credential  string
+	runtimeName  string
+	runtime      Runtime
+	name         string
+	zipperAddr   string
+	observed     []uint32
+	wantedTarget string
+	credential   string
+	mu           sync.Mutex
 }
 
 // Init initializes the serverless
-func (s *wasmServerless) Init(opts *serverless.Options) error {
+func (s *wasmServerless) Init(opts *cli.Options) error {
 	runtime, err := NewRuntime(opts.Runtime)
 	if err != nil {
 		return err
@@ -31,10 +36,12 @@ func (s *wasmServerless) Init(opts *serverless.Options) error {
 		return err
 	}
 
+	s.runtimeName = opts.Runtime
 	s.runtime = runtime
 	s.name = opts.Name
-	s.zipperAddrs = opts.ZipperAddrs
+	s.zipperAddr = opts.ZipperAddr
 	s.observed = runtime.GetObserveDataTags()
+	s.wantedTarget = runtime.GetWantedTarget()
 	s.credential = opts.Credential
 
 	return nil
@@ -42,55 +49,60 @@ func (s *wasmServerless) Init(opts *serverless.Options) error {
 
 // Build is an empty implementation
 func (s *wasmServerless) Build(clean bool) error {
+	wasmRuntime := s.runtimeName
+	if wasmRuntime == "" {
+		wasmRuntime = "wazero"
+	}
+	pkglog.InfoStatusEvent(os.Stdout, "WASM runtime: %s", wasmRuntime)
 	return nil
 }
 
 // Run the wasm serverless function
 func (s *wasmServerless) Run(verbose bool) error {
-	var wg sync.WaitGroup
-
-	for _, addr := range s.zipperAddrs {
-		sfn := yomo.NewStreamFunction(
-			s.name,
-			yomo.WithZipperAddr(addr),
-			yomo.WithObserveDataTags(s.observed...),
-			yomo.WithCredential(s.credential),
-		)
-
-		var ch chan struct{}
-
-		sfn.SetHandler(
-			func(req []byte) (frame.Tag, []byte) {
-				tag, res, err := s.runtime.RunHandler(req)
-				if err != nil {
-					ch <- struct{}{}
-				}
-
-				return tag, res
-			},
-		)
-
-		sfn.SetErrorHandler(
-			func(err error) {
-				log.Printf("[flow][%s] error handler: %T %v\n", addr, err, err)
-			},
-		)
-
-		err := sfn.Connect()
-		if err != nil {
-			return err
-		}
-		defer sfn.Close()
-		defer s.runtime.Close()
-
-		wg.Add(1)
-		go func() {
-			<-ch
-			wg.Done()
-		}()
+	sfn := yomo.NewStreamFunction(
+		s.name,
+		s.zipperAddr,
+		yomo.WithSfnCredential(s.credential),
+	)
+	// init
+	err := sfn.Init(func() error {
+		return s.runtime.RunInit()
+	})
+	if err != nil {
+		return err
 	}
+	// set observe data tags
+	sfn.SetObserveDataTags(s.observed...)
 
-	wg.Wait()
+	// set wanted target
+	sfn.SetWantedTarget(s.wantedTarget)
+
+	sfn.SetHandler(
+		func(ctx serverless.Context) {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			err := s.runtime.RunHandler(ctx)
+			if err != nil {
+				pkglog.FailureStatusEvent(os.Stderr, "%v", err)
+			}
+		},
+	)
+
+	sfn.SetErrorHandler(
+		func(err error) {
+			log.Printf("[wasm] error handler: %T %v\n", err, err)
+		},
+	)
+
+	err = sfn.Connect()
+	if err != nil {
+		return err
+	}
+	defer sfn.Close()
+	defer s.runtime.Close()
+
+	sfn.Wait()
+
 	return nil
 }
 
@@ -100,5 +112,5 @@ func (s *wasmServerless) Executable() bool {
 }
 
 func init() {
-	serverless.Register(&wasmServerless{}, ".wasm")
+	cli.Register(&wasmServerless{}, ".wasm")
 }

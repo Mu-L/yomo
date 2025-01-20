@@ -4,22 +4,24 @@ version: "3"
 
 output: "prefixed"
 
+env:
+  YOMO_LOG_LEVEL: error
+
 tasks:
   run:
     desc: run
     deps: [sfn, source, zipper-1, zipper-2]
 
+
   zipper-1:
     desc: run zipper-1
-    dir: zipper-1
     cmds:
-      - "go run zipper_1.go"
+      - "yomo serve -c zipper_1.yaml"
 
   zipper-2:
     desc: run zipper-2
-    dir: zipper-2
     cmds:
-      - "go run zipper_2.go"
+     - "yomo serve -c zipper_2.yaml"
 
   sfn:
     desc: sfn
@@ -42,8 +44,10 @@ tasks:
     desc: build source
     cmds:
       - "go build -o ./bin/source{{exeExt}} source/source.go"
+    internal: true
 
   sfn-build:
     desc: build sfn
     cmds:
       - "go build -o ./bin/sfn{{exeExt}} sfn/sfn_echo.go"
+    internal: true

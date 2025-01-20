@@ -1,20 +1,14 @@
+// Package yomo test main.s
 package yomo
 
 import (
+	"context"
 	"os"
 	"testing"
 )
 
-var (
-	testMeshURL string
-)
-
 func TestMain(m *testing.M) {
-	zipper := NewZipperWithOptions("test-zipper")
-	defer zipper.Close()
-	zipper.ConfigWorkflow("test/workflow.yaml")
-	go zipper.ListenAndServe()
-
+	go RunZipper(context.TODO(), "test/config.yaml")
 	code := m.Run()
 	os.Exit(code)
 }

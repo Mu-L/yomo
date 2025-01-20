@@ -2,55 +2,121 @@ package core
 
 import (
 	"crypto/tls"
-	"net"
+	"log/slog"
+	"time"
 
-	"github.com/lucas-clemente/quic-go"
+	"github.com/quic-go/quic-go"
 	"github.com/yomorun/yomo/core/auth"
+	"github.com/yomorun/yomo/core/router"
+	"github.com/yomorun/yomo/core/ylog"
 )
 
-// ServerOptions are the options for YoMo server.
-type ServerOptions struct {
-	QuicConfig *quic.Config
-	TLSConfig  *tls.Config
-	Addr       string
-	Auths      []auth.Authentication
-	Conn       net.PacketConn
+// DefaultQuicConfig be used when `quicConfig` is nil.
+var DefaultQuicConfig = &quic.Config{
+	Versions:                       []quic.Version{quic.Version1, quic.Version2},
+	MaxIdleTimeout:                 time.Second * 5,
+	KeepAlivePeriod:                time.Second * 2,
+	MaxIncomingStreams:             1000,
+	MaxIncomingUniStreams:          1000,
+	HandshakeIdleTimeout:           time.Second * 3,
+	InitialStreamReceiveWindow:     1024 * 1024 * 2,
+	InitialConnectionReceiveWindow: 1024 * 1024 * 2,
+	// DisablePathMTUDiscovery:        true,
 }
 
-// WithAddr sets the server address.
-func WithAddr(addr string) ServerOption {
-	return func(o *ServerOptions) {
-		o.Addr = addr
+// ServerOption is the option for server.
+type ServerOption func(*serverOptions)
+
+// serverOptions are the options for YoMo server.
+type serverOptions struct {
+	quicConfig           *quic.Config
+	tlsConfig            *tls.Config
+	auths                map[string]auth.Authentication
+	logger               *slog.Logger
+	connector            Connector
+	versionNegotiateFunc VersionNegotiateFunc
+	router               router.Router
+	connMiddlewares      []ConnMiddleware
+	frameMiddlewares     []FrameMiddleware
+}
+
+func defaultServerOptions() *serverOptions {
+	logger := ylog.Default()
+
+	opts := &serverOptions{
+		quicConfig: DefaultQuicConfig,
+		tlsConfig:  nil,
+		auths:      map[string]auth.Authentication{},
+		logger:     logger,
 	}
+	return opts
 }
 
 // WithAuth sets the server authentication method.
 func WithAuth(name string, args ...string) ServerOption {
-	return func(o *ServerOptions) {
-		if auth, ok := auth.GetAuth(name); ok {
-			auth.Init(args...)
-			o.Auths = append(o.Auths, auth)
+	return func(o *serverOptions) {
+		if a, ok := auth.GetAuth(name); ok {
+			a.Init(args...)
+			if o.auths == nil {
+				o.auths = make(map[string]auth.Authentication)
+			}
+			o.auths[a.Name()] = a
 		}
 	}
 }
 
 // WithServerTLSConfig sets the TLS configuration for the server.
 func WithServerTLSConfig(tc *tls.Config) ServerOption {
-	return func(o *ServerOptions) {
-		o.TLSConfig = tc
+	return func(o *serverOptions) {
+		o.tlsConfig = tc
 	}
 }
 
 // WithServerQuicConfig sets the QUIC configuration for the server.
 func WithServerQuicConfig(qc *quic.Config) ServerOption {
-	return func(o *ServerOptions) {
-		o.QuicConfig = qc
+	return func(o *serverOptions) {
+		o.quicConfig = qc
 	}
 }
 
-// WithConn sets the connection for the server.
-func WithConn(conn net.PacketConn) ServerOption {
-	return func(o *ServerOptions) {
-		o.Conn = conn
+// WithServerLogger sets logger for the server.
+func WithServerLogger(logger *slog.Logger) ServerOption {
+	return func(o *serverOptions) {
+		o.logger = logger
+	}
+}
+
+// WithRouter sets router for the server.
+func WithRouter(r router.Router) ServerOption {
+	return func(o *serverOptions) {
+		o.router = r
+	}
+}
+
+// WithConnector sets connector for the server.
+func WithConnector(c Connector) ServerOption {
+	return func(o *serverOptions) {
+		o.connector = c
+	}
+}
+
+// WithVersionNegotiateFunc sets the version negotiate function.
+func WithVersionNegotiateFunc(f VersionNegotiateFunc) ServerOption {
+	return func(o *serverOptions) {
+		o.versionNegotiateFunc = f
+	}
+}
+
+// WithFrameMiddleware sets frame middleware for the client.
+func WithFrameMiddleware(mws ...FrameMiddleware) ServerOption {
+	return func(o *serverOptions) {
+		o.frameMiddlewares = append(o.frameMiddlewares, mws...)
+	}
+}
+
+// WithConnMiddleware sets conn middleware for the client.
+func WithConnMiddleware(mws ...ConnMiddleware) ServerOption {
+	return func(o *serverOptions) {
+		o.connMiddlewares = append(o.connMiddlewares, mws...)
 	}
 }

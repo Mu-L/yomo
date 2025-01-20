@@ -2,43 +2,74 @@ package yomo
 
 import (
 	"context"
+	"errors"
+	"log/slog"
+
+	"github.com/robfig/cron/v3"
 
 	"github.com/yomorun/yomo/core"
 	"github.com/yomorun/yomo/core/frame"
-)
-
-const (
-	streamFunctionLogPrefix = "\033[31m[yomo:sfn]\033[0m "
+	"github.com/yomorun/yomo/core/metadata"
+	"github.com/yomorun/yomo/core/serverless"
+	"github.com/yomorun/yomo/pkg/id"
+	"github.com/yomorun/yomo/pkg/trace"
+	yserverless "github.com/yomorun/yomo/serverless"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // StreamFunction defines serverless streaming functions.
 type StreamFunction interface {
+	// SetWantedTarget sets target for sfn that to receive data carrying the same target.
+	// This function is optional and it should be called before Connect().
+	SetWantedTarget(string)
 	// SetObserveDataTags set the data tag list that will be observed
-	// Deprecated: use yomo.WithObserveDataTags instead
-	SetObserveDataTags(tag ...frame.Tag)
+	SetObserveDataTags(tag ...uint32)
+	// Init will initialize the stream function
+	Init(fn func() error) error
 	// SetHandler set the handler function, which accept the raw bytes data and return the tag & response
 	SetHandler(fn core.AsyncHandler) error
 	// SetErrorHandler set the error handler function when server error occurs
 	SetErrorHandler(fn func(err error))
 	// SetPipeHandler set the pipe handler function
 	SetPipeHandler(fn core.PipeHandler) error
+	// SetCronHandler set the cron handler function.
+	//  Examples:
+	//  sfn.SetCronHandler("0 30 * * * *", func(ctx serverless.CronContext) {})
+	//  sfn.SetCronHandler("@hourly",      func(ctx serverless.CronContext) {})
+	//  sfn.SetCronHandler("@every 1h30m", func(ctx serverless.CronContext) {})
+	// more spec style see: https://pkg.go.dev/github.com/robfig/cron#hdr-Usage
+	SetCronHandler(spec string, fn core.CronHandler) error
 	// Connect create a connection to the zipper
 	Connect() error
 	// Close will close the connection
 	Close() error
-	// Send a data to zipper.
-	Write(tag frame.Tag, carriage []byte) error
+	// Wait waits sfn to finish.
+	Wait()
 }
 
 // NewStreamFunction create a stream function.
-func NewStreamFunction(name string, opts ...Option) StreamFunction {
-	options := NewOptions(opts...)
-	client := core.NewClient(name, core.ClientTypeStreamFunction, options.ClientOptions...)
+func NewStreamFunction(name, zipperAddr string, opts ...SfnOption) StreamFunction {
+	trace.SetTracerProvider()
+
+	clientOpts := make([]core.ClientOption, len(opts))
+	for k, v := range opts {
+		clientOpts[k] = core.ClientOption(v)
+	}
+
+	client := core.NewClient(name, zipperAddr, core.ClientTypeStreamFunction, clientOpts...)
+
+	client.Logger = client.Logger.With(
+		"service", "stream-function",
+		"sfn_id", client.ClientID(),
+		"sfn_name", client.Name(),
+		"zipper_addr", zipperAddr,
+	)
+
 	sfn := &streamFunction{
 		name:            name,
-		zipperEndpoint:  options.ZipperAddr,
+		zipperAddr:      zipperAddr,
 		client:          client,
-		observeDataTags: make([]frame.Tag, 0),
+		observeDataTags: make([]uint32, 0),
 	}
 
 	return sfn
@@ -49,48 +80,85 @@ var _ StreamFunction = &streamFunction{}
 // streamFunction implements StreamFunction interface.
 type streamFunction struct {
 	name            string
-	zipperEndpoint  string
+	zipperAddr      string
 	client          *core.Client
-	observeDataTags []frame.Tag       // tag list that will be observed
+	observeDataTags []uint32          // tag list that will be observed
 	fn              core.AsyncHandler // user's function which will be invoked when data arrived
 	pfn             core.PipeHandler
 	pIn             chan []byte
-	pOut            chan *frame.PayloadFrame
+	cronSpec        string
+	cronFn          core.CronHandler
+	cron            *cron.Cron
+	pOut            chan *frame.DataFrame
+}
+
+func (s *streamFunction) SetWantedTarget(target string) {
+	if target == "" {
+		return
+	}
+	s.client.SetWantedTarget(target)
 }
 
 // SetObserveDataTags set the data tag list that will be observed.
-// Deprecated: use yomo.WithObserveDataTags instead
-func (s *streamFunction) SetObserveDataTags(tag ...frame.Tag) {
+func (s *streamFunction) SetObserveDataTags(tag ...uint32) {
+	s.observeDataTags = tag
 	s.client.SetObserveDataTags(tag...)
-	s.client.Logger().Debugf("%sSetObserveDataTag(%v)", streamFunctionLogPrefix, s.observeDataTags)
+	s.client.Logger.Debug("set sfn observe data tasg", "tags", s.observeDataTags)
 }
 
 // SetHandler set the handler function, which accept the raw bytes data and return the tag & response.
 func (s *streamFunction) SetHandler(fn core.AsyncHandler) error {
 	s.fn = fn
-	s.client.Logger().Debugf("%sSetHandler(%v)", streamFunctionLogPrefix, s.fn)
+	s.client.Logger.Debug("set async handler")
+	return nil
+}
+
+func (s *streamFunction) SetCronHandler(cronSpec string, fn core.CronHandler) error {
+	s.cronSpec = cronSpec
+	s.cronFn = fn
+	s.client.Logger.Debug("set cron handler")
 	return nil
 }
 
 func (s *streamFunction) SetPipeHandler(fn core.PipeHandler) error {
 	s.pfn = fn
-	s.client.Logger().Debugf("%sSetHandler(%v)", streamFunctionLogPrefix, s.pfn)
+	s.client.Logger.Debug("set pipe handler")
 	return nil
 }
 
 // Connect create a connection to the zipper, when data arrvied, the data will be passed to the
-// handler which setted by SetHandler method.
+// handler set by SetHandler method.
 func (s *streamFunction) Connect() error {
-	s.client.Logger().Debugf("%s Connect()", streamFunctionLogPrefix)
+	hasCron := s.cronFn != nil && s.cronSpec != ""
+	if hasCron {
+		s.cron = cron.New()
+		s.cron.AddFunc(s.cronSpec, func() {
+			md := core.NewMetadata(s.client.ClientID(), id.New())
+			// add trace
+			tracer := trace.NewTracer("StreamFunction")
+			span := tracer.Start(md, s.name)
+			defer tracer.End(md, span, attribute.String("sfn_handler_type", "corn_handler"))
+
+			cronCtx := serverless.NewCronContext(s.client, md)
+			s.cronFn(cronCtx)
+		})
+		s.cron.Start()
+	}
+
+	if len(s.observeDataTags) == 0 && !hasCron {
+		return errors.New("streamFunction cannot observe data because the required tag has not been set")
+	}
+
+	s.client.Logger.Debug("sfn connecting to zipper ...")
 	// notify underlying network operations, when data with tag we observed arrived, invoke the func
 	s.client.SetDataFrameObserver(func(data *frame.DataFrame) {
-		s.client.Logger().Debugf("%sreceive DataFrame: %v", streamFunctionLogPrefix, data)
-		s.onDataFrame(data.GetCarriage(), data.GetMetaFrame())
+		s.client.Logger.Debug("received data frame")
+		s.onDataFrame(data)
 	})
 
 	if s.pfn != nil {
 		s.pIn = make(chan []byte)
-		s.pOut = make(chan *frame.PayloadFrame)
+		s.pOut = make(chan *frame.DataFrame)
 
 		// handle user's pipe function
 		go func() {
@@ -102,81 +170,119 @@ func (s *streamFunction) Connect() error {
 			for {
 				data := <-s.pOut
 				if data != nil {
-					s.client.Logger().Debugf("%spipe fn send: %v", streamFunctionLogPrefix, data)
-					frame := frame.NewDataFrame()
-					// todo: frame.SetTransactionID
-					frame.SetCarriage(data.Tag, data.Carriage)
+					s.client.Logger.Debug("pipe fn send", "payload_frame", data)
+					md, err := metadata.Decode(data.Metadata)
+					if err != nil {
+						s.client.Logger.Error("sfn decode metadata error", "err", err)
+						break
+					}
+
+					// add trace
+					tracer := trace.NewTracer("StreamFunction")
+					span := tracer.Start(md, s.name)
+					defer tracer.End(
+						md,
+						span,
+						attribute.String("sfn_handler_type", "pipe_handler"),
+						attribute.Int("recv_data_tag", int(data.Tag)),
+						attribute.Int("recv_data_len", len(data.Payload)),
+					)
+
+					rawMd, err := md.Encode()
+					if err != nil {
+						s.client.Logger.Error("sfn encode metadata error", "err", err)
+						break
+					}
+					data.Metadata = rawMd
+
+					frame := &frame.DataFrame{
+						Tag:      data.Tag,
+						Metadata: data.Metadata,
+						Payload:  data.Payload,
+					}
+
 					s.client.WriteFrame(frame)
 				}
 			}
 		}()
 	}
 
-	err := s.client.Connect(context.Background(), s.zipperEndpoint)
-	if err != nil {
-		s.client.Logger().Errorf("%sConnect() error: %s", streamFunctionLogPrefix, err)
-	}
+	err := s.client.Connect(context.Background())
 	return err
 }
 
 // Close will close the connection.
 func (s *streamFunction) Close() error {
-	if s.pIn != nil {
-		close(s.pIn)
+	if s.cron != nil {
+		s.cron.Stop()
 	}
 
-	if s.pOut != nil {
-		close(s.pOut)
-	}
+	_ = s.client.Close()
 
-	if s.client != nil {
-		if err := s.client.Close(); err != nil {
-			s.client.Logger().Errorf("%sClose(): %v", err)
-			return err
-		}
-	}
+	trace.ShutdownTracerProvider()
+
+	s.client.Logger.Debug("the sfn is closed")
 
 	return nil
 }
 
-// when DataFrame we observed arrived, invoke the user's function
-func (s *streamFunction) onDataFrame(data []byte, metaFrame *frame.MetaFrame) {
-	s.client.Logger().Infof("%sonDataFrame ->[%s]", streamFunctionLogPrefix, s.name)
-
-	if s.fn != nil {
-		go func() {
-			// invoke serverless
-			tag, resp := s.fn(data)
-			// if resp is not nil, means the user's function has returned something, we should send it to the zipper
-			if len(resp) != 0 {
-				// build a DataFrame
-				// TODO: seems we should implement a DeepCopy() of MetaFrame in the future
-				frame := frame.NewDataFrame()
-				// reuse transactionID
-				frame.SetTransactionID(metaFrame.TransactionID())
-				// reuse sourceID
-				frame.SetSourceID(metaFrame.SourceID())
-				frame.SetCarriage(tag, resp)
-				s.client.Logger().Debugf("%sstart WriteFrame(): %v", streamFunctionLogPrefix, resp)
-				s.client.WriteFrame(frame)
-			}
-		}()
-	} else if s.pfn != nil {
-		s.client.Logger().Debugf("%spipe fn receive: data[%d]=%# x", streamFunctionLogPrefix, len(data), data)
-		s.pIn <- data
-	} else {
-		s.client.Logger().Warnf("%sStreamFunction is nil", streamFunctionLogPrefix)
-	}
+// Wait waits sfn to finish.
+func (s *streamFunction) Wait() {
+	s.client.Wait()
 }
 
-// Send a DataFrame to zipper.
-func (s *streamFunction) Write(tag frame.Tag, carriage []byte) error {
-	frame := frame.NewDataFrame()
-	frame.SetCarriage(tag, carriage)
-	return s.client.WriteFrame(frame)
+// when DataFrame we observed arrived, invoke the user's function
+// func (s *streamFunction) onDataFrame(data []byte, metaFrame *frame.MetaFrame) {
+func (s *streamFunction) onDataFrame(dataFrame *frame.DataFrame) {
+	if s.fn != nil {
+		go func(dataFrame *frame.DataFrame) {
+			md, err := metadata.Decode(dataFrame.Metadata)
+			if err != nil {
+				s.client.Logger.Error("sfn decode metadata error", "err", err)
+				return
+			}
+
+			// add trace
+			tracer := trace.NewTracer("StreamFunction", s.client.DisableOtelTrace())
+			span := tracer.Start(md, s.name)
+			defer tracer.End(
+				md,
+				span,
+				attribute.String("sfn_handler_type", "async_handler"),
+				attribute.Int("recv_data_tag", int(dataFrame.Tag)),
+				attribute.Int("recv_data_len", len(dataFrame.Payload)),
+			)
+
+			serverlessCtx := serverless.NewContext(s.client, dataFrame.Tag, md, dataFrame.Payload)
+			s.fn(serverlessCtx)
+			checkLLMFunctionCall(s.client.Logger, serverlessCtx)
+		}(dataFrame)
+	} else if s.pfn != nil {
+		data := dataFrame.Payload
+		s.client.Logger.Debug("pipe sfn receive", "data_len", len(data), "data", data)
+		s.pIn <- data
+	} else {
+		s.client.Logger.Warn("sfn does not have a handler")
+	}
 }
 
 // SetErrorHandler set the error handler function when server error occurs
 func (s *streamFunction) SetErrorHandler(fn func(err error)) {
 	s.client.SetErrorHandler(fn)
+}
+
+// Init will initialize the stream function
+func (s *streamFunction) Init(fn func() error) error {
+	return fn()
+}
+
+func checkLLMFunctionCall(logger *slog.Logger, serverlessCtx yserverless.Context) {
+	fc, err := serverlessCtx.LLMFunctionCall()
+	if err != nil {
+		// it's not a LLM function call ctx
+		return
+	}
+	if !fc.IsOK {
+		logger.Warn("The function return nothing to LLM, please ensure ctx.WriteLLMResult() has been called and successful in Handler func.")
+	}
 }

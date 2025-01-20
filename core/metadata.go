@@ -1,17 +1,25 @@
 package core
 
-import "github.com/yomorun/yomo/core/frame"
+import (
+	"github.com/yomorun/yomo/core/metadata"
+)
 
-// Metadata is used for storing extra info of the application
-type Metadata interface {
-	// Encode is the serialize method
-	Encode() []byte
+// NewMetadata returns metadata for yomo working.
+func NewMetadata(sourceID, tid string) metadata.M {
+	md := metadata.M{
+		metadata.SourceIDKey: sourceID,
+		metadata.TIDKey:      tid,
+	}
+	return md
 }
 
-// MetadataBuilder is the builder of Metadata
-type MetadataBuilder interface {
-	// Build will return an Metadata instance according to the handshake frame passed in
-	Build(f *frame.HandshakeFrame) (Metadata, error)
-	// Decode is the deserialize method
-	Decode(buf []byte) (Metadata, error)
+// GetTIDFromMetadata gets TID from metadata.
+func GetTIDFromMetadata(m metadata.M) string {
+	tid, _ := m.Get(metadata.TIDKey)
+	return tid
+}
+
+// SetMetadataTarget sets target in metadata.
+func SetMetadataTarget(m metadata.M, target string) {
+	m.Set(metadata.TargetKey, target)
 }

@@ -20,15 +20,13 @@ func main() {
 	// connect to YoMo-Zipper.
 	source := yomo.NewSource(
 		"yomo-source",
-		yomo.WithZipperAddr("localhost:9000"),
+		"localhost:9000",
 	)
 	err := source.Connect()
 	if err != nil {
 		log.Printf("❌ Emit the data to YoMo-Zipper failure with err: %v", err)
 		return
 	}
-
-	source.SetDataTag(0x10)
 
 	defer source.Close()
 
@@ -52,7 +50,7 @@ func generateAndSendData(source yomo.Source) {
 		}
 
 		// send data via QUIC stream.
-		_, err = source.Write(sendingBuf)
+		err = source.Write(0x10, sendingBuf)
 		if err != nil {
 			log.Printf("❌ Emit %v to YoMo-Zipper failure with err: %v", data, err)
 		} else {

@@ -3,6 +3,7 @@
 ## Build
 
 ```sh
-zig build-exe src/main.zig -target wasm32-wasi --name sfn
+zig build-lib src/main.zig -target wasm32-wasi -dynamic -rdynamic -OReleaseSafe --name sfn
+
 cp sfn.wasm ../
 ```

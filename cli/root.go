@@ -1,5 +1,5 @@
 /*
-Copyright © 2021 CELLA, Inc.
+Copyright © 2021 Allegro Networks
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -23,25 +23,19 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/yomorun/yomo/cli/serverless"
 	"github.com/yomorun/yomo/pkg/file"
-	"github.com/yomorun/yomo/pkg/logger"
 )
 
 var (
 	config  string
-	url     string
 	opts    serverless.Options
 	verbose bool
 )
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:     "yomo",
-	Version: GetVersion(),
-	PersistentPreRun: func(cmd *cobra.Command, args []string) {
-		if verbose {
-			logger.EnableDebug()
-		}
-	},
+	Use:              "yomo",
+	Version:          GetVersion(),
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {},
 	// Run: func(cmd *cobra.Command, args []string) { },
 }
 

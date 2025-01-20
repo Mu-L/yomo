@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"log"
 	"math/rand"
-	"os"
 	"time"
 
 	"github.com/yomorun/yomo"
+	"github.com/yomorun/yomo/serverless"
 )
 
 type noiseData struct {
@@ -17,22 +17,31 @@ type noiseData struct {
 }
 
 func main() {
-	// connect to YoMo-Zipper.
-	opts := []yomo.Option{yomo.WithZipperAddr("localhost:9000")}
-	if credential := os.Getenv("YOMO_CREDENTIAL"); credential != "" {
-		opts = append(opts, yomo.WithCredential(credential))
+	addr := "localhost:9000"
+	source := yomo.NewSource(
+		"source",
+		addr,
+	)
+	if err := source.Connect(); err != nil {
+		log.Fatalln(err)
 	}
-
-	source := yomo.NewSource("yomo-source", opts...)
 	defer source.Close()
 
-	err := source.Connect()
-	if err != nil {
-		log.Printf("[source] ❌ Emit the data to YoMo-Zipper failure with err: %v", err)
-		return
+	sink := yomo.NewStreamFunction(
+		"Sink",
+		addr,
+	)
+	sink.SetObserveDataTags(0x34)
+	sink.SetHandler(
+		func(ctx serverless.Context) {
+			log.Printf("[source] received tag[%#x] %s\n", ctx.Tag(), string(ctx.Data()))
+		},
+	)
+	if err := sink.Connect(); err != nil {
+		log.Fatalln(err)
 	}
+	defer sink.Close()
 
-	source.SetDataTag(0x33)
 	// set the error handler function when server error occurs
 	source.SetErrorHandler(func(err error) {
 		log.Printf("[source] error handler: %v", err)
@@ -41,7 +50,7 @@ func main() {
 	generateAndSendData(source)
 }
 
-func generateAndSendData(stream yomo.Source) {
+func generateAndSendData(stream yomo.Source) error {
 	for {
 		// generate random data.
 		data := noiseData{
@@ -54,11 +63,7 @@ func generateAndSendData(stream yomo.Source) {
 		sendingBuf, _ := json.Marshal(data)
 
 		// send data via QUIC stream.
-		_, err := stream.Write(sendingBuf)
-		// using the following code, zipper will broadcast this message to cascading zippers.
-		// make sure to configure the downstream zippers using mesh-config flag,
-		// see the mesh example for more details.
-		// err := stream.Broadcast(sendingBuf)
+		err := stream.Write(0x33, sendingBuf)
 		if err != nil {
 			log.Printf("[source] ❌ Emit %v to YoMo-Zipper failure with err: %v", data, err)
 		} else {

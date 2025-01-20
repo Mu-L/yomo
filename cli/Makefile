@@ -3,7 +3,7 @@ GOFMT ?= gofmt "-s"
 GOFILES := $(shell find . -name "*.go")
 VETPACKAGES ?= $(shell $(GO) list ./... | grep -v /examples/)
 CLI_VERSION ?= $(shell git describe --tags 2>/dev/null || git rev-parse --short HEAD)
-GO_LDFLAGS ?= -X $(shell $(GO) list -m)/cmd.Version=$(CLI_VERSION)
+GO_LDFLAGS ?= -X $(shell $(GO) list -m)/cli.Version=$(CLI_VERSION)
 VER ?= $(shell git describe --tags --abbrev=0)
 TAGS ?=
 
@@ -17,20 +17,20 @@ vet:
 	$(GO) vet $(VETPACKAGES)
 
 build:
-	$(GO) build -tags "$(TAGS)" -o bin/yomo -ldflags "-s -w ${GO_LDFLAGS}" ../cmd/yomo/main.go
+	$(GO) build -tags "$(TAGS)" -o bin/yomo -trimpath -ldflags "-s -w ${GO_LDFLAGS}" ../cmd/yomo/main.go
 
 archive-release:
 	rm -rf bin/yomo
-	GOARCH=arm64 GOOS=darwin $(GO) build -tags "$(TAGS)" -o bin/yomo -ldflags "-s -w ${GO_LDFLAGS}" ../cmd/yomo/main.go
+	GOARCH=arm64 GOOS=darwin $(GO) build -tags "$(TAGS)" -o bin/yomo -trimpath -ldflags "-s -w ${GO_LDFLAGS}" ../cmd/yomo/main.go
 	tar -C ./bin -czf bin/yomo-${VER}-arm64-Darwin.tar.gz yomo
 	rm -rf bin/yomo
-	GOARCH=amd64 GOOS=darwin $(GO) build -tags "$(TAGS)" -o bin/yomo -ldflags "-s -w ${GO_LDFLAGS}" ../cmd/yomo/main.go
+	GOARCH=amd64 GOOS=darwin $(GO) build -tags "$(TAGS)" -o bin/yomo -trimpath -ldflags "-s -w ${GO_LDFLAGS}" ../cmd/yomo/main.go
 	tar -C ./bin -czf bin/yomo-${VER}-x86_64-Darwin.tar.gz yomo
 	rm -rf bin/yomo
-	GOARCH=arm64 GOOS=linux $(GO) build -tags "$(TAGS)" -o bin/yomo -ldflags "-s -w ${GO_LDFLAGS}" ../cmd/yomo/main.go
+	GOARCH=arm64 GOOS=linux $(GO) build -tags "$(TAGS)" -o bin/yomo -trimpath -ldflags "-s -w ${GO_LDFLAGS}" ../cmd/yomo/main.go
 	tar -C ./bin -czf bin/yomo-${VER}-arm64-Linux.tar.gz yomo
 	rm -rf bin/yomo
-	GOARCH=amd64 GOOS=linux $(GO) build -tags "$(TAGS)" -o bin/yomo -ldflags "-s -w ${GO_LDFLAGS}" ../cmd/yomo/main.go
+	GOARCH=amd64 GOOS=linux $(GO) build -tags "$(TAGS)" -o bin/yomo -trimpath -ldflags "-s -w ${GO_LDFLAGS}" ../cmd/yomo/main.go
 	tar -C ./bin -czf bin/yomo-${VER}-x86_64-Linux.tar.gz yomo
 	rm -rf bin/yomo
 	GOARCH=amd64 GOOS=windows $(GO) build -tags "$(TAGS)" -o bin/yomo.exe -ldflags "-s -w ${GO_LDFLAGS}" ../cmd/yomo/main.go
@@ -40,34 +40,35 @@ archive-release:
 
 archive-release-linux-amd64:
 	rm -rf bin/yomo
-	GOARCH=amd64 GOOS=linux $(GO) build -o bin/yomo -ldflags "-s -w ${GO_LDFLAGS}" ../cmd/yomo/main.go
+	GOARCH=amd64 GOOS=linux $(GO) build -o bin/yomo -trimpath  -ldflags "-s -w ${GO_LDFLAGS}" ../cmd/yomo/main.go
 	tar -C ./bin -czf bin/yomo-${VER}-x86_64-Linux.tar.gz yomo
-	make bina
 
 archive-release-linux-arm64:
 	rm -rf bin/yomo
-	GOARCH=arm64 GOOS=linux $(GO) build -o bin/yomo -ldflags "-s -w ${GO_LDFLAGS}" ../cmd/yomo/main.go
+	GOARCH=arm64 GOOS=linux $(GO) build -o bin/yomo -trimpath  -ldflags "-s -w ${GO_LDFLAGS}" ../cmd/yomo/main.go
 	tar -C ./bin -czf bin/yomo-${VER}-arm64-Linux.tar.gz yomo
 
 archive-release-darwin-amd64:
 	rm -rf bin/yomo
-	GOARCH=amd64 GOOS=darwin $(GO) build -o bin/yomo -ldflags "-s -w ${GO_LDFLAGS}" ../cmd/yomo/main.go
+	GOARCH=amd64 GOOS=darwin $(GO) build -o bin/yomo -trimpath  -ldflags "-s -w ${GO_LDFLAGS}" ../cmd/yomo/main.go
 	tar -C ./bin -czf bin/yomo-${VER}-x86_64-Darwin.tar.gz yomo
 
 archive-release-darwin-arm64:
 	rm -rf bin/yomo
-	GOARCH=arm64 GOOS=darwin $(GO) build -o bin/yomo -ldflags "-s -w ${GO_LDFLAGS}" ../cmd/yomo/main.go
+	GOARCH=arm64 GOOS=darwin $(GO) build -o bin/yomo -trimpath  -ldflags "-s -w ${GO_LDFLAGS}" ../cmd/yomo/main.go
 	tar -C ./bin -czf bin/yomo-${VER}-arm64-Darwin.tar.gz yomo
 
 archive-release-windows-amd64:
-	$(GO) build -o bin/yomo.exe -ldflags "-s -w ${GO_LDFLAGS}" ../cmd/yomo/main.go
+	$(GO) build -o bin/yomo.exe -trimpath  -ldflags "-s -w ${GO_LDFLAGS}" ../cmd/yomo/main.go
 	tar -C ./bin -czf bin/yomo-${VER}-x86_64-Windows.tar.gz yomo.exe
 
 build-w-sym:
-	GOARCH=amd64 GOOS=linux $(GO) build -o bin/yomo -ldflags "${GO_LDFLAGS}" -gcflags=-l ../cmd/yomo/main.go
+	GOARCH=amd64 GOOS=linux $(GO) build -o bin/yomo -trimpath  -ldflags "${GO_LDFLAGS}" -gcflags=-l ../cmd/yomo/main.go
 
 bina:
-	@echo ${bina_json} > ./bin/bina.json
+	mkdir -p bin
+	rm -rf bin/bina.json
+	@echo ${bina_json} > bin/bina.json
 
 cli_version:
 	@echo ${VER} > ./VERSION

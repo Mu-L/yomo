@@ -1,3 +1,4 @@
+// Package tls provides tls config for yomo.
 package tls
 
 import (
@@ -49,6 +50,24 @@ func CreateServerTLSConfig(host string) (*tls.Config, error) {
 		ClientAuth:   clientAuth,
 		NextProtos:   []string{"yomo"},
 	}, nil
+}
+
+// MustCreateServerTLSConfig creates server tls config, It is panic If error here.
+func MustCreateServerTLSConfig(host string) *tls.Config {
+	conf, err := CreateServerTLSConfig(host)
+	if err != nil {
+		panic(err)
+	}
+	return conf
+}
+
+// MustCreateClientTLSConfig creates client tls config, It is panic If error here.
+func MustCreateClientTLSConfig() *tls.Config {
+	conf, err := CreateClientTLSConfig()
+	if err != nil {
+		panic(err)
+	}
+	return conf
 }
 
 // CreateClientTLSConfig creates client tls config.

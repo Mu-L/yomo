@@ -23,7 +23,7 @@ var region = os.Getenv("REGION")
 func main() {
 	// connect to YoMo-Zipper.
 	addr := fmt.Sprintf("%s:%d", "localhost", getPort())
-	source := yomo.NewSource("yomo-source", yomo.WithZipperAddr(addr))
+	source := yomo.NewSource("yomo-source", addr)
 	err := source.Connect()
 	if err != nil {
 		log.Printf("❌ Emit the data to YoMo-Zipper failure with err: %v", err)
@@ -31,7 +31,6 @@ func main() {
 	}
 	defer source.Close()
 
-	source.SetDataTag(0x10)
 	// generate mock data and send it to YoMo-Zipper in every 100 ms.
 	generateAndSendData(source)
 }
@@ -48,8 +47,8 @@ func generateAndSendData(stream yomo.Source) {
 		// Encode data via Y3 codec https://github.com/yomorun/y3-codec.
 		sendingBuf, _ := json.Marshal(data)
 
-		// broadcast this message to cascading zippers using `Broadcast` method
-		err := stream.Broadcast(sendingBuf)
+		// write this message to zippers
+		err := stream.Write(0x10, sendingBuf)
 		if err != nil {
 			log.Printf("❌ Emit %v to YoMo-Zipper failure with err: %v", data, err)
 		} else {

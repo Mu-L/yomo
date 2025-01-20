@@ -1,5 +1,17 @@
 # Examples
 
+## Prerequisite
+
+### Install Task 
+
+[Install Task](https://taskfile.dev/#/installation)
+
+### Install YoMo CLI 
+
+```bash
+$ task -t ../Taskfile.yml cli:install
+```
+
 All examples can be run by [Task](https://taskfile.dev), following the [Install Task](https://taskfile.dev/#/installation), execute `task -l` in this directory will list all the examples.
 
 ```bash
@@ -25,8 +37,8 @@ can run each example directly by `task example-basic`, `task example-cascading-z
 
 ## Linux Pipeline over cloud
 
-- [1-pipeline](https://github.com/yomorun/yomo/tree/master/example/1-pipeline): read the local streams (f.e. `/dev/urandom`) and use [yomo-source](https://docs.yomo.run/source) to send the streams over cloud.
-- [2-iopipe](https://github.com/yomorun/yomo/tree/master/example/2-iopipe): use `io.Copy()` to pipe the local streams (f.e. `/dev/urandom`) to [yomo-source](https://docs.yomo.run/source).
+- [1-pipeline](https://github.com/yomorun/yomo/tree/master/example/1-pipeline): read the local streams (f.e. `/dev/urandom`) and use [yomo-source](https://yomo.run/docs/api/source) to send the streams over cloud.
+- [2-iopipe](https://github.com/yomorun/yomo/tree/master/example/2-iopipe): use `io.Copy()` to pipe the local streams (f.e. `/dev/urandom`) to [yomo-source](https://yomo.run/docs/api/source).
 
 ## Multiple stream functions
 
@@ -37,11 +49,11 @@ can run each example directly by `task example-basic`, `task example-cascading-z
 
 ## Cascading zippers
 
-- [4-cascading-zipper](https://github.com/yomorun/yomo/tree/master/example/4-cascading-zipper): [source](https://docs.yomo.run/source) connect to [zipper-1](https://docs.yomo.run/zipper), then [zipper-1](https://docs.yomo.run/zipper) will broadcast the streams to the zippers in other regions.
+- [4-cascading-zipper](https://github.com/yomorun/yomo/tree/master/example/4-cascading-zipper): [source](https://yomo.run/docs/api/source) connect to [zipper-1](https://yomo.run/docs/cli/zipper), then [zipper-1](https://yomo.run/docs/cli/zipper) will write the streams to the zippers in other regions.
 
 ## Backflow 
 
-- [5-backflow](https://github.com/yomorun/yomo/tree/master/example/5-backflow): [source](https://docs.yomo.run/source) can receive stream functions processed results.
+- [5-backflow](https://github.com/yomorun/yomo/tree/master/example/5-backflow): [source](https://yomo.run/docs/api/source) can receive stream functions processed results.
 
   *This feature is experimental.*
 
@@ -52,7 +64,7 @@ can run each example directly by `task example-basic`, `task example-cascading-z
    ```go
    source := yomo.NewSource(
      "yomo-source",
-     yomo.WithZipperAddr(addr),
+     "127.0.0.1:9000",
      // set observe data tags, 0x34, 0x35 is sfn return data tags
      yomo.WithObserveDataTags(0x34, 0x35), 
    )

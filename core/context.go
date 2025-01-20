@@ -1,205 +1,112 @@
 package core
 
 import (
-	"io"
+	"log/slog"
 	"sync"
-	"time"
 
-	"github.com/lucas-clemente/quic-go"
 	"github.com/yomorun/yomo/core/frame"
-	"github.com/yomorun/yomo/core/yerr"
-	"github.com/yomorun/yomo/pkg/logger"
+	"github.com/yomorun/yomo/core/metadata"
 )
 
 var ctxPool sync.Pool
 
-// Context for YoMo Server.
+// Context is context for frame handling.
+// The lifespan of the Context should align with the lifespan of the frame.
 type Context struct {
-	// Conn is the connection of client.
-	Conn   quic.Connection
-	connID string
-	// Stream is the long-lived connection between client and server.
-	Stream io.ReadWriteCloser
+	// Connection is the connection used for reading and writing frames.
+	Connection *Connection
 	// Frame receives from client.
-	Frame frame.Frame
-	// Keys store the key/value pairs in context.
-	Keys map[string]interface{}
-
+	Frame *frame.DataFrame
+	// FrameMetadata is the merged metadata from the frame.
+	FrameMetadata metadata.M
+	// mu is used to protect Keys from concurrent read and write operations.
 	mu sync.RWMutex
+	// Keys stores the key/value pairs in context, It is Lazy initialized.
+	Keys map[string]any
+	// Using Logger to log in connection handler scope, Logger is frame-level logger.
+	Logger *slog.Logger
 }
 
-func newContext(conn quic.Connection, stream quic.Stream) (ctx *Context) {
+// Set is used to store a new key/value pair exclusively for this context.
+// It also lazy initializes c.Keys if it was not used previously.
+func (c *Context) Set(key string, value any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.Keys == nil {
+		c.Keys = make(map[string]any)
+	}
+
+	c.Keys[key] = value
+}
+
+// Get returns the value for the given key, ie: (value, true).
+// Returns (nil, false) if the value does not exist.
+func (c *Context) Get(key string) (any, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	value, ok := c.Keys[key]
+	return value, ok
+}
+
+// newContext returns a new YoMo context that implements the standard library `context.Context` interface.
+// The YoMo context is used to manage the lifecycle of a connection and provides a way to pass data and metadata
+// between connection processing functions. The lifecycle of the context is equal to the lifecycle of the connection
+// that it is associated with. The context can be used to manage timeouts, cancellations, and other aspects of connection processing.
+func newContext(conn *Connection, df *frame.DataFrame) (c *Context, err error) {
+	fmd, err := metadata.Decode(df.Metadata)
+	if err != nil {
+		return nil, err
+	}
+
+	// merge connection metadata.
+	conn.Metadata().Range(func(k, v string) bool {
+		fmd.Set(k, v)
+		return true
+	})
+
 	v := ctxPool.Get()
 	if v == nil {
-		ctx = new(Context)
+		c = new(Context)
 	} else {
-		ctx = v.(*Context)
+		c = v.(*Context)
 	}
-	ctx.Conn = conn
-	ctx.Stream = stream
-	ctx.connID = conn.RemoteAddr().String()
+
+	c.Frame = df
+	c.FrameMetadata = fmd
+
+	c.Connection = conn
+
+	// log with tid
+	c.Logger = c.Connection.Logger.With("tid", GetTIDFromMetadata(fmd))
+
 	return
 }
 
-// WithFrame sets a frame to context.
-func (c *Context) WithFrame(f frame.Frame) *Context {
-	c.Frame = f
-	return c
+// CloseWithError close connection with an error string.
+func (c *Context) CloseWithError(errString string) {
+	c.Logger.Debug("connection closed", "err", errString)
+
+	err := c.Connection.FrameConn().CloseWithError(errString)
+	if err == nil {
+		return
+	}
+	c.Logger.Error("connection close failed", "err", err)
 }
 
-// Clean the context.
-func (c *Context) Clean() {
-	logger.Debugf("%sconn[%s] context clean", ServerLogPrefix, c.connID)
+// Release release the Context, the Context which has been released will not be available.
+//
+// Warning: do not use any Context api after Release, It maybe cause an error.
+func (c *Context) Release() {
 	c.reset()
 	ctxPool.Put(c)
 }
 
 func (c *Context) reset() {
-	c.Conn = nil
-	c.connID = ""
-	c.Stream = nil
+	c.Connection = nil
 	c.Frame = nil
-	for k := range c.Keys {
-		delete(c.Keys, k)
-	}
-}
-
-// CloseWithError closes the stream and cleans the context.
-func (c *Context) CloseWithError(code yerr.ErrorCode, msg string) {
-	logger.Debugf("%sconn[%s] context close, errCode=%#x, msg=%s", ServerLogPrefix, c.connID, code, msg)
-	if c.Stream != nil {
-		c.Stream.Close()
-	}
-	if c.Conn != nil {
-		c.Conn.CloseWithError(quic.ApplicationErrorCode(code), msg)
-	}
-	c.Clean()
-}
-
-// ConnID get quic connection id
-func (c *Context) ConnID() string {
-	return c.connID
-}
-
-// Set a key/value pair to context.
-func (c *Context) Set(key string, value interface{}) {
-	c.mu.Lock()
-	if c.Keys == nil {
-		c.Keys = make(map[string]interface{})
-	}
-
-	c.Keys[key] = value
-	c.mu.Unlock()
-}
-
-// Get the value by a specified key.
-func (c *Context) Get(key string) (value interface{}, exists bool) {
-	c.mu.RLock()
-	value, exists = c.Keys[key]
-	c.mu.RUnlock()
-	return
-}
-
-// GetString gets a string value by a specified key.
-func (c *Context) GetString(key string) (s string) {
-	if val, ok := c.Get(key); ok && val != nil {
-		s, _ = val.(string)
-	}
-	return
-}
-
-// GetBool gets a bool value by a specified key.
-func (c *Context) GetBool(key string) (b bool) {
-	if val, ok := c.Get(key); ok && val != nil {
-		b, _ = val.(bool)
-	}
-	return
-}
-
-// GetInt gets an int value by a specified key.
-func (c *Context) GetInt(key string) (i int) {
-	if val, ok := c.Get(key); ok && val != nil {
-		i, _ = val.(int)
-	}
-	return
-}
-
-// GetInt64 gets an int64 value by a specified key.
-func (c *Context) GetInt64(key string) (i64 int64) {
-	if val, ok := c.Get(key); ok && val != nil {
-		i64, _ = val.(int64)
-	}
-	return
-}
-
-// GetUint gets an uint value by a specified key.
-func (c *Context) GetUint(key string) (ui uint) {
-	if val, ok := c.Get(key); ok && val != nil {
-		ui, _ = val.(uint)
-	}
-	return
-}
-
-// GetUint64 gets an uint64 value by a specified key.
-func (c *Context) GetUint64(key string) (ui64 uint64) {
-	if val, ok := c.Get(key); ok && val != nil {
-		ui64, _ = val.(uint64)
-	}
-	return
-}
-
-// GetFloat64 gets a float64 value by a specified key.
-func (c *Context) GetFloat64(key string) (f64 float64) {
-	if val, ok := c.Get(key); ok && val != nil {
-		f64, _ = val.(float64)
-	}
-	return
-}
-
-// GetTime gets a time.Time value by a specified key.
-func (c *Context) GetTime(key string) (t time.Time) {
-	if val, ok := c.Get(key); ok && val != nil {
-		t, _ = val.(time.Time)
-	}
-	return
-}
-
-// GetDuration gets a time.Duration value by a specified key.
-func (c *Context) GetDuration(key string) (d time.Duration) {
-	if val, ok := c.Get(key); ok && val != nil {
-		d, _ = val.(time.Duration)
-	}
-	return
-}
-
-// GetStringSlice gets a []string value by a specified key.
-func (c *Context) GetStringSlice(key string) (ss []string) {
-	if val, ok := c.Get(key); ok && val != nil {
-		ss, _ = val.([]string)
-	}
-	return
-}
-
-// GetStringMap gets a map[string]interface{} value by a specified key.
-func (c *Context) GetStringMap(key string) (sm map[string]interface{}) {
-	if val, ok := c.Get(key); ok && val != nil {
-		sm, _ = val.(map[string]interface{})
-	}
-	return
-}
-
-// GetStringMapString gets a map[string]string value by a specified key.
-func (c *Context) GetStringMapString(key string) (sms map[string]string) {
-	if val, ok := c.Get(key); ok && val != nil {
-		sms, _ = val.(map[string]string)
-	}
-	return
-}
-
-// GetStringMapStringSlice gets a map[string][]string value by a specified key.
-func (c *Context) GetStringMapStringSlice(key string) (smss map[string][]string) {
-	if val, ok := c.Get(key); ok && val != nil {
-		smss, _ = val.(map[string][]string)
-	}
-	return
+	c.FrameMetadata = nil
+	c.Logger = nil
+	clear(c.Keys)
 }

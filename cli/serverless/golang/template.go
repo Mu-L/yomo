@@ -6,31 +6,34 @@ import (
 	"text/template"
 )
 
-// MainFuncRxTmpl the rxstream serverless of the main function template
-//go:embed templates/main_rx.tmpl
-var MainFuncRxTmpl []byte
-
-// MainFuncRawBytesTmpl the raw bytes serverless of the main function template
-//go:embed templates/main_raw_bytes.tmpl
-var MainFuncRawBytesTmpl []byte
-
-// PartialsTmpl partials template, used for rendering the partials
-//go:embed templates/partials.tmpl
-var PartialsTmpl []byte
+//go:embed templates/main.tmpl
+var MainFuncTmpl []byte
 
 //go:embed templates/init.tmpl
-var InitFuncTmpl []byte
+var InitTmpl []byte
+
+//go:embed templates/init_test.tmpl
+var InitTestTmpl []byte
+
+//go:embed templates/wasi_main.tmpl
+var WasiMainFuncTmpl []byte
 
 // Context defines context for the template
 type Context struct {
 	// Name of the servcie
 	Name string
-	// ZipperAddrs is the addresses of the zipper server
-	ZipperAddrs []string
+	// ZipperAddr is the address of the zipper server
+	ZipperAddr string
 	// Client credential
 	Credential string
-	// use environment variables
-	UseEnv bool
+	// WithInitFunc determines whether to work with init function
+	WithInitFunc bool
+	// WithWantedTarget determines whether to work with SetWantedTarget
+	WithWantedTarget bool
+	// WithDescription determines whether to work with description
+	WithDescription bool
+	// WithInputSchema determines whether to work with input schema
+	WithInputSchema bool
 }
 
 // RenderTmpl renders the template with the given context

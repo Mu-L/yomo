@@ -14,7 +14,7 @@ func main() {
 	// connect to YoMo-Zipper.
 	source := yomo.NewSource(
 		"yomo-source",
-		yomo.WithZipperAddr("localhost:9001"),
+		"localhost:9001",
 		yomo.WithCredential("token:z1"),
 	)
 	err := source.Connect()
@@ -23,8 +23,6 @@ func main() {
 		return
 	}
 	defer source.Close()
-
-	source.SetDataTag(0x33)
 
 	// generate mock data and send it to YoMo-Zipper.
 	err = generateAndSendData(source)
@@ -40,8 +38,7 @@ func generateAndSendData(stream yomo.Source) error {
 		rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
 		data := []byte(fmt.Sprintf("%d", rnd.Uint32()))
 		// send data via QUIC stream.
-		// broadcast this message to cascading zippers using `Broadcast` method
-		err := stream.Broadcast(data)
+		err := stream.Write(0x33, data)
 		if err != nil {
 			log.Printf("[source] ❌ Emit %v to YoMo-Zipper failure with err: %v", data, err)
 			time.Sleep(500 * time.Millisecond)

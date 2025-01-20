@@ -1,6 +1,6 @@
-# Implementing YoMo Stream Function using WebAssembly
+# Implement YoMo Stream Function by WebAssembly
 
-Now YoMo is capable of running compiled [WebAssembly](https://webassembly.org)
+YoMo is capable of running compiled [WebAssembly](https://webassembly.org)
 serverless functions, which means developers can use their familiar programming
 languages other than Go to implement YoMo applications.
 
@@ -8,11 +8,20 @@ languages other than Go to implement YoMo applications.
 feedback is highly welcomed and there may be changes in the future stable
 releases._
 
-## Install wasm runtime
+## WASM/WASI Runtimes
 
-YoMo has integrated [Wasmtime](https://wasmtime.dev) and
-[WasmEdge](https://wasmedge.org). You can choose one of them as your wasm
-serverless function runtime.
+Currently, YoMo support three popular wasm runtimes:
+
+- [wazero](https://wazero.io)
+- [Wasmtime](https://wasmtime.dev)
+- [WasmEdge](https://wasmedge.org)
+
+By default, wasm stream functions are served by [wazero](https://wazero.io),
+which is a zero dependency WebAssembly runtime written in Go.
+
+Also, YoMo integrated [Wasmtime](https://wasmtime.dev) and
+[WasmEdge](https://wasmedge.org). Developers can choose your favorite one as the
+runtime. But both Wasmtime and WasmEdge need to install their requirements:
 
 - Wasmtime
 
@@ -58,7 +67,7 @@ serverless function runtime.
 - Start YoMo zipper
 
   ```sh
-  yomo serve -c workflow.yaml
+  yomo serve -c ../config.yaml
   ```
 
 - Start wasm serverless function
@@ -74,7 +83,7 @@ serverless function runtime.
 - Start Source & Sink
 
   ```sh
-  cd source
+  cd ../uppercase/source
   go run main.go
   ```
 
@@ -92,26 +101,35 @@ serverless function. Now we will elaborate on our wasm development design.
 
      Declare observing a datatag by this serverless function.
 
-   - `yomo_load_input: [pointer I32] -> []`
+   - `yomo_context_data_size: [] -> [tag I32]`
+
+     This function will return the input data size.
+
+   - `yomo_context_data: [pointer I32, length I32] -> []`
 
      This function aims to load the input data from source or upstream SFN node,
      hence it should be called at the very beginning in the `yomo_handler`.
-     Developers should allocate a continuous memory buffer space, and passing
-     the start buffer position as the `pointer` parameter.
+     Developers should allocate a continuous memory buffer space, with passing
+     the start buffer position as the `pointer` parameter and memory buffer size
+     as `length` parameter.
 
-   - `yomo_dump_output: [tag I32, pointer I32, length I32] -> []`
+   - `yomo_write: [tag I32, pointer I32, length I32] -> []`
 
      Similarly, this function is used for passing the output data to the host
-     environment.
+     environment. Notice that it can be executed multiple times.
 
 2. Export functions
 
-   - `yomo_init: [] -> []`
+   - `yomo_init: [] -> [I32]`
 
      You can do the initialization tasks in this function, such as loading a
      config file.
 
-   - `yomo_handler: [input_length I32] -> []`
+   - `yomo_observe_datatags: [] -> []`
+
+     Set the data tag list that will be observed.
+
+   - `yomo_handler: [] -> []`
 
      This is the essential feature of the serverless functions: processing
      application data.

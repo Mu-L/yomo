@@ -5,16 +5,16 @@ import (
 	"os"
 
 	"github.com/yomorun/yomo"
-	"github.com/yomorun/yomo/core/frame"
+	"github.com/yomorun/yomo/serverless"
 )
 
 func main() {
 	sfn := yomo.NewStreamFunction(
 		"echo-sfn",
-		yomo.WithZipperAddr("localhost:9002"),
-		yomo.WithObserveDataTags(0x33),
-		yomo.WithCredential("token:z2"),
+		"localhost:9002",
+		yomo.WithSfnCredential("token:z2"),
 	)
+	sfn.SetObserveDataTags(0x33)
 	defer sfn.Close()
 
 	// set handler
@@ -27,11 +27,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	select {}
+	sfn.Wait()
 }
 
-func handler(data []byte) (frame.Tag, []byte) {
-	val := string(data)
+func handler(ctx serverless.Context) {
+	val := string(ctx.Data())
 	log.Printf(">> [sfn] got tag=0x33, data=%s", val)
-	return 0x0, nil
 }

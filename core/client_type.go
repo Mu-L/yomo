@@ -1,28 +1,34 @@
 package core
 
+// ClientType is the type of client.
+type ClientType byte
+
 const (
-	// ClientTypeNone is connection type "None".
-	ClientTypeNone ClientType = 0xFF
-	// ClientTypeSource is connection type "Source".
+	// ClientTypeSource is client type "Source".
+	// "Source" type client sends data to "Stream Function" stream generally.
 	ClientTypeSource ClientType = 0x5F
-	// ClientTypeUpstreamZipper is connection type "Upstream Zipper".
+
+	// ClientTypeUpstreamZipper is client type "Upstream Zipper".
+	// "Upstream Zipper" type client sends data from "Source" to other zipper node.
+	// With "Upstream Zipper", the yomo can run in mesh mode.
 	ClientTypeUpstreamZipper ClientType = 0x5E
-	// ClientTypeStreamFunction is connection type "Stream Function".
+
+	// ClientTypeStreamFunction is client type "Stream Function".
+	// "Stream Function" handles data from source.
 	ClientTypeStreamFunction ClientType = 0x5D
 )
 
-// ClientType represents the connection type.
-type ClientType byte
+var clientTypeStringMap = map[ClientType]string{
+	ClientTypeSource:         "Source",
+	ClientTypeUpstreamZipper: "UpstreamZipper",
+	ClientTypeStreamFunction: "StreamFunction",
+}
 
+// String returns string for ClientType.
 func (c ClientType) String() string {
-	switch c {
-	case ClientTypeSource:
-		return "Source"
-	case ClientTypeUpstreamZipper:
-		return "Upstream Zipper"
-	case ClientTypeStreamFunction:
-		return "Stream Function"
-	default:
-		return "None"
+	str, ok := clientTypeStringMap[c]
+	if !ok {
+		return "Unknown"
 	}
+	return str
 }

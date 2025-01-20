@@ -1,5 +1,5 @@
 /*
-Copyright © 2021 CELLA, Inc.
+Copyright © 2021 Allegro Networks
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -16,17 +16,31 @@ limitations under the License.
 package cli
 
 import (
+	"context"
+	"fmt"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"github.com/yomorun/yomo"
+	"github.com/yomorun/yomo/core/ylog"
+	pkgconfig "github.com/yomorun/yomo/pkg/config"
 	"github.com/yomorun/yomo/pkg/log"
-)
+	"github.com/yomorun/yomo/pkg/trace"
 
-var meshConfURL string
-var v *viper.Viper
+	"github.com/yomorun/yomo/pkg/bridge/ai"
+	providerpkg "github.com/yomorun/yomo/pkg/bridge/ai/provider"
+	"github.com/yomorun/yomo/pkg/bridge/ai/provider/anthropic"
+	"github.com/yomorun/yomo/pkg/bridge/ai/provider/azopenai"
+	"github.com/yomorun/yomo/pkg/bridge/ai/provider/cerebras"
+	"github.com/yomorun/yomo/pkg/bridge/ai/provider/cfazure"
+	"github.com/yomorun/yomo/pkg/bridge/ai/provider/cfopenai"
+	"github.com/yomorun/yomo/pkg/bridge/ai/provider/gemini"
+	"github.com/yomorun/yomo/pkg/bridge/ai/provider/githubmodels"
+	"github.com/yomorun/yomo/pkg/bridge/ai/provider/ollama"
+	"github.com/yomorun/yomo/pkg/bridge/ai/provider/openai"
+	"github.com/yomorun/yomo/pkg/bridge/ai/provider/vertexai"
+	"github.com/yomorun/yomo/pkg/bridge/ai/provider/xai"
+)
 
 // serveCmd represents the serve command
 var serveCmd = &cobra.Command{
@@ -35,38 +49,75 @@ var serveCmd = &cobra.Command{
 	Long:  "Run a YoMo-Zipper",
 	Run: func(cmd *cobra.Command, args []string) {
 		if config == "" {
-			log.FailureStatusEvent(os.Stdout, "Please input the file name of workflow config")
+			log.FailureStatusEvent(os.Stdout, "Please input the file name of config")
 			return
 		}
-		// printYoMoServerConf(conf)
 
-		// endpoint := fmt.Sprintf("%s:%d", conf.Host, conf.Port)
-
-		zipper, err := yomo.NewZipper(config)
+		// log.InfoStatusEvent(os.Stdout, "")
+		ylog.Info("Starting YoMo Zipper...")
+		// config
+		conf, err := pkgconfig.ParseConfigFile(config)
 		if err != nil {
 			log.FailureStatusEvent(os.Stdout, err.Error())
+			return
 		}
-		// auth
-		auth := v.GetString("auth")
-		if len(auth) > 0 {
-			idx := strings.Index(auth, ":")
-			if idx != -1 {
-				authName := auth[:idx]
-				idx++
-				args := auth[idx:]
-				authArgs := strings.Split(args, ",")
-				// log.InfoStatusEvent(os.Stdout, "authName=%s, authArgs=%s, idx=%d", authName, authArgs, idx)
-				zipper.InitOptions(yomo.WithAuth(authName, authArgs...))
+
+		trace.SetTracerProvider()
+
+		ctx := context.Background()
+		// listening address.
+		listenAddr := fmt.Sprintf("%s:%d", conf.Host, conf.Port)
+
+		options := []yomo.ZipperOption{}
+		tokenString := ""
+		if _, ok := conf.Auth["type"]; ok {
+			if tokenString, ok = conf.Auth["token"]; ok {
+				options = append(options, yomo.WithAuth("token", tokenString))
 			}
 		}
-		// mesh
-		err = zipper.ConfigMesh(meshConfURL)
+		// check llm bridge server config
+		// parse the llm bridge config
+		bridgeConf := conf.Bridge
+		aiConfig, err := ai.ParseConfig(bridgeConf)
+		if err != nil {
+			if err == ai.ErrConfigNotFound {
+				log.InfoStatusEvent(os.Stdout, err.Error())
+			} else {
+				log.FailureStatusEvent(os.Stdout, err.Error())
+				return
+			}
+		}
+		if aiConfig != nil {
+			// add AI connection middleware
+			options = append(options, yomo.WithZipperConnMiddleware(ai.RegisterFunctionMW()))
+		}
+		// new zipper
+		zipper, err := yomo.NewZipper(
+			conf.Name,
+			conf.Mesh,
+			options...)
 		if err != nil {
 			log.FailureStatusEvent(os.Stdout, err.Error())
+			return
+		}
+		zipper.Logger().Info("using config file", "file_path", config)
+
+		// AI Server
+		if aiConfig != nil {
+			// register the llm provider
+			registerAIProvider(aiConfig)
+			// start the llm api server
+			go func() {
+				err := ai.Serve(aiConfig, listenAddr, fmt.Sprintf("token:%s", tokenString), ylog.Default())
+				if err != nil {
+					log.FailureStatusEvent(os.Stdout, err.Error())
+					return
+				}
+			}()
 		}
 
-		log.InfoStatusEvent(os.Stdout, "Running YoMo-Zipper...")
-		err = zipper.ListenAndServe()
+		// start the zipper
+		err = zipper.ListenAndServe(ctx, listenAddr)
 		if err != nil {
 			log.FailureStatusEvent(os.Stdout, err.Error())
 			return
@@ -74,16 +125,62 @@ var serveCmd = &cobra.Command{
 	},
 }
 
+func registerAIProvider(aiConfig *ai.Config) error {
+	for name, provider := range aiConfig.Providers {
+		switch name {
+		case "azopenai":
+			providerpkg.RegisterProvider(azopenai.NewProvider(
+				provider["api_key"],
+				provider["api_endpoint"],
+				provider["deployment_id"],
+				provider["api_version"],
+			))
+		case "openai":
+			providerpkg.RegisterProvider(openai.NewProvider(provider["api_key"], provider["model"]))
+		case "cloudflare_azure":
+			providerpkg.RegisterProvider(cfazure.NewProvider(
+				provider["endpoint"],
+				provider["api_key"],
+				provider["resource"],
+				provider["deployment_id"],
+				provider["api_version"],
+			))
+		case "cloudflare_openai":
+			providerpkg.RegisterProvider(cfopenai.NewProvider(
+				provider["endpoint"],
+				provider["api_key"],
+				provider["model"],
+			))
+		case "ollama":
+			providerpkg.RegisterProvider(ollama.NewProvider(provider["api_endpoint"], provider["model"]))
+		case "gemini":
+			providerpkg.RegisterProvider(gemini.NewProvider(provider["api_key"]))
+		case "githubmodels":
+			providerpkg.RegisterProvider(githubmodels.NewProvider(provider["api_key"], provider["model"]))
+		case "cerebras":
+			providerpkg.RegisterProvider(cerebras.NewProvider(provider["api_key"], provider["model"]))
+		case "anthropic":
+			providerpkg.RegisterProvider(anthropic.NewProvider(provider["api_key"], provider["model"]))
+		case "xai":
+			providerpkg.RegisterProvider(xai.NewProvider(provider["api_key"], provider["model"]))
+		case "vertexai":
+			providerpkg.RegisterProvider(vertexai.NewProvider(
+				provider["project_id"],
+				provider["location"],
+				provider["model"],
+				provider["credentials_file"],
+			))
+		default:
+			log.WarningStatusEvent(os.Stdout, "unknown provider: %s", name)
+		}
+	}
+
+	ylog.Info("register LLM providers", "num", len(providerpkg.ListProviders()))
+	return nil
+}
+
 func init() {
 	rootCmd.AddCommand(serveCmd)
 
-	serveCmd.Flags().StringVarP(&config, "config", "c", "workflow.yaml", "Workflow config file")
-	serveCmd.Flags().StringVarP(&meshConfURL, "mesh-config", "m", "", "The URL of mesh config")
-	// auth string
-	serveCmd.Flags().StringP("auth", "a", "", "authentication name and arguments, eg: `token:yomo`")
-	v = viper.New()
-	v.AutomaticEnv()
-	v.SetEnvPrefix("YOMO")
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	v.BindPFlag("auth", serveCmd.Flags().Lookup("auth"))
+	serveCmd.Flags().StringVarP(&config, "config", "c", "", "config file")
 }

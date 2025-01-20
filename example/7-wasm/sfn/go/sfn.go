@@ -3,35 +3,36 @@ package main
 import (
 	"fmt"
 	"strings"
+
+	"github.com/yomorun/yomo/serverless"
+	"github.com/yomorun/yomo/serverless/guest"
 )
 
-func main() {}
-
-//export yomo_observe_datatag
-func yomoObserveDataTag(tag uint32)
-
-//export yomo_load_input
-func yomoLoadInput(pointer *byte)
-
-//export yomo_dump_output
-func yomoDumpOutput(tag uint32, pointer *byte, length int)
-
-//export yomo_init
-func yomoInit() {
-	yomoObserveDataTag(0x33)
+func main() {
+	guest.DataTags = DataTags
+	guest.Handler = Handler
+	guest.Init = Init
 }
 
-//export yomo_handler
-func yomoHandler(inputLength int) {
-	fmt.Printf("wasm go sfn received %d bytes\n", inputLength)
+// Init will initialize the stream function
+func Init() error {
+	fmt.Println("wasm go sfn init")
+	return nil
+}
 
+func Handler(ctx serverless.Context) {
 	// load input data
-	input := make([]byte, inputLength)
-	yomoLoadInput(&input[0])
+	tag := ctx.Tag()
+	input := ctx.Data()
+	fmt.Printf("wasm go sfn received %d bytes with tag[%#x]\n", len(input), tag)
 
 	// process app data
 	output := strings.ToUpper(string(input))
 
 	// dump output data
-	yomoDumpOutput(0x34, &[]byte(output)[0], len(output))
+	ctx.Write(0x34, []byte(output))
+}
+
+func DataTags() []uint32 {
+	return []uint32{0x33}
 }

@@ -2,6 +2,7 @@ package golang
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -10,12 +11,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/yomorun/yomo/cli/serverless"
 	"github.com/yomorun/yomo/pkg/file"
 	"github.com/yomorun/yomo/pkg/log"
+	"golang.org/x/mod/modfile"
 	"golang.org/x/tools/go/ast/astutil"
 	"golang.org/x/tools/imports"
 )
@@ -24,17 +25,12 @@ import (
 type GolangServerless struct {
 	opts    *serverless.Options
 	source  string
-	target  string
+	output  string
 	tempDir string
 }
 
 // Init initializes the serverless
 func (s *GolangServerless) Init(opts *serverless.Options) error {
-	// now := time.Now()
-	// msg := "Init: serverless function..."
-	// initSpinning := log.Spinner(os.Stdout, msg)
-	// defer initSpinning(log.Failure)
-
 	s.opts = opts
 	if !file.Exists(s.opts.Filename) {
 		return fmt.Errorf("the file %s doesn't exist", s.opts.Filename)
@@ -46,47 +42,55 @@ func (s *GolangServerless) Init(opts *serverless.Options) error {
 		return fmt.Errorf(`"%s" content is empty`, s.opts.Filename)
 	}
 
+	opt, err := ParseSrc(s.opts.Filename)
+	if err != nil {
+		return fmt.Errorf("parse source code: %s", err)
+	}
 	// append main function
 	ctx := Context{
-		Name:        s.opts.Name,
-		ZipperAddrs: s.opts.ZipperAddrs,
-		Credential:  s.opts.Credential,
-		UseEnv:      s.opts.UseEnv,
+		Name:             s.opts.Name,
+		ZipperAddr:       s.opts.ZipperAddr,
+		Credential:       s.opts.Credential,
+		WithInitFunc:     opt.WithInit,
+		WithWantedTarget: opt.WithWantedTarget,
+		WithDescription:  opt.WithDescription,
+		WithInputSchema:  opt.WithInputSchema,
 	}
 
-	// determine: rx stream serverless or raw bytes serverless.
-	isRx := strings.Contains(string(source), "rx.Stream")
-	mainFuncTmpl := ""
-	if isRx {
-		MainFuncRxTmpl = append(MainFuncRxTmpl, PartialsTmpl...)
-		mainFuncTmpl = string(MainFuncRxTmpl)
-	} else {
-		MainFuncRawBytesTmpl = append(MainFuncRawBytesTmpl, PartialsTmpl...)
-		mainFuncTmpl = string(MainFuncRawBytesTmpl)
+	isWasi := opts.WASI
+	// main function template
+	mainFuncTmpl := MainFuncTmpl
+	// wasi template
+	if isWasi {
+		mainFuncTmpl = WasiMainFuncTmpl
 	}
-
-	mainFunc, err := RenderTmpl(mainFuncTmpl, &ctx)
+	mainFunc, err := RenderTmpl(string(mainFuncTmpl), &ctx)
 	if err != nil {
 		return fmt.Errorf("Init: %s", err)
 	}
+	// merge app source code
 	source = append(source, mainFunc...)
-	// log.InfoStatusEvent(os.Stdout, "merge source elapse: %v", time.Since(now))
-	// Create the AST by parsing src
-	// fmt.Println(string(source))
 	fset := token.NewFileSet()
-	astf, err := parser.ParseFile(fset, "", source, 0)
+	astf, err := parser.ParseFile(fset, "", source, parser.ParseComments)
 	if err != nil {
 		return fmt.Errorf("Init: parse source file err %s", err)
 	}
 	// Add import packages
 	astutil.AddNamedImport(fset, astf, "", "github.com/yomorun/yomo")
-	// astutil.AddNamedImport(fset, astf, "stdlog", "log")
-	// log.InfoStatusEvent(os.Stdout, "import elapse: %v", time.Since(now))
+	astutil.AddNamedImport(fset, astf, "", "github.com/joho/godotenv")
+	astutil.AddNamedImport(fset, astf, "", "github.com/spf13/cobra")
+	astutil.AddNamedImport(fset, astf, "", "github.com/spf13/viper")
+
+	if isWasi {
+		// wasm guest import
+		astutil.AddNamedImport(fset, astf, "", "github.com/yomorun/yomo/serverless/guest")
+	}
 	// Generate the code
 	code, err := generateCode(fset, astf)
 	if err != nil {
 		return fmt.Errorf("Init: generate code err %s", err)
 	}
+	// fmt.Println("333.code", string(code))
 	// Create a temp folder.
 	tempDir, err := os.MkdirTemp("", "yomo_")
 	if err != nil {
@@ -99,12 +103,9 @@ func (s *GolangServerless) Init(opts *serverless.Options) error {
 	if err != nil {
 		return fmt.Errorf("Init: imports %s", err)
 	}
-	// log.InfoStatusEvent(os.Stdout, "fix import elapse: %v", time.Since(now))
 	if err := file.PutContents(tempFile, fixedSource); err != nil {
 		return fmt.Errorf("Init: write file err %s", err)
 	}
-	// log.InfoStatusEvent(os.Stdout, "final write file elapse: %v", time.Since(now))
-	// mod
 	name := strings.ReplaceAll(opts.Name, " ", "_")
 	if name == "" {
 		name = "yomo-sfn"
@@ -112,7 +113,7 @@ func (s *GolangServerless) Init(opts *serverless.Options) error {
 	cmd := exec.Command("go", "mod", "init", name)
 	cmd.Dir = tempDir
 	env := os.Environ()
-	env = append(env, fmt.Sprintf("GO111MODULE=%s", "on"))
+	// env = append(env, fmt.Sprintf("GO111MODULE=%s", "on"))
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -120,13 +121,13 @@ func (s *GolangServerless) Init(opts *serverless.Options) error {
 		return err
 	}
 
-	// TODO: check if is already built in temp dir by MD5
 	s.source = tempFile
 	return nil
 }
 
 // Build compiles the serverless to executable
 func (s *GolangServerless) Build(clean bool) error {
+	log.PendingStatusEvent(os.Stdout, "Building YoMo Stream Function instance...")
 	// check if the file exists
 	appPath := s.source
 	if _, err := os.Stat(appPath); os.IsNotExist(err) {
@@ -134,7 +135,6 @@ func (s *GolangServerless) Build(clean bool) error {
 	}
 	// env
 	env := os.Environ()
-	env = append(env, fmt.Sprintf("GO111MODULE=%s", "on"))
 	// use custom go.mod
 	if s.opts.ModFile != "" {
 		mfile, _ := filepath.Abs(s.opts.ModFile)
@@ -143,76 +143,94 @@ func (s *GolangServerless) Build(clean bool) error {
 		}
 		// go.mod
 		log.WarningStatusEvent(os.Stdout, "Use custom go.mod: %s", mfile)
+		modContent := file.GetBinContents(mfile)
+		if len(modContent) == 0 {
+			return errors.New("go.mod is empty")
+		}
+		f, err := modfile.Parse("go.mod", modContent, nil)
+		if err != nil {
+			return err
+		}
+		for _, r := range f.Replace {
+			if strings.HasPrefix(r.New.Path, ".") {
+				abs, err := filepath.Abs(r.New.Path)
+				if err != nil {
+					return err
+				}
+				modContent = bytes.Replace(modContent, []byte(r.New.Path), []byte(abs), 1)
+			}
+		}
+		// wirte to temp go.mod
 		tempMod := filepath.Join(s.tempDir, "go.mod")
-		file.Copy(mfile, tempMod)
-		// source := file.GetContents(tempMod)
-		// log.InfoStatusEvent(os.Stdout, "go.mod: %s", source)
-		// mod download
-		cmd := exec.Command("go", "mod", "tidy")
-		cmd.Env = env
-		cmd.Dir = s.tempDir
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			err = fmt.Errorf("Build: go mod tidy err %s", out)
-			return err
-		}
-	} else {
-		// Upgrade modules that provide packages imported by packages in the main module
-		cmd := exec.Command("go", "get", "-d", "./...")
-		cmd.Dir = s.tempDir
-		cmd.Env = env
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			err = fmt.Errorf("Build: go get err %s", out)
-			return err
+		if err := file.PutContents(tempMod, modContent); err != nil {
+			return fmt.Errorf("write go.mod err %s", err)
 		}
 	}
-	// build
-	goos := runtime.GOOS
-	dir, _ := filepath.Split(s.opts.Filename)
-	sl, _ := filepath.Abs(dir + "sl.yomo")
-
-	// clean build
-	if clean {
-		defer func() {
-			file.Remove(s.tempDir)
-		}()
-	}
-	s.target = sl
-	// fmt.Printf("goos=%s\n", goos)
-	if goos == "windows" {
-		sl, _ = filepath.Abs(dir + "sl.exe")
-		s.target = sl
-	}
-	// go build
-	cmd := exec.Command("go", "build", "-ldflags", "-s -w", "-o", sl, appPath)
+	// mod download
+	cmd := exec.Command("go", "mod", "tidy")
 	cmd.Env = env
 	cmd.Dir = s.tempDir
-	// log.InfoStatusEvent(os.Stdout, "Build: cmd: %+v", cmd)
-	// source := file.GetContents(s.source)
-	// log.InfoStatusEvent(os.Stdout, "source: %s", source)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		err = fmt.Errorf("Build: failure %s", out)
+		err = fmt.Errorf("Build: go mod tidy err %s", out)
 		return err
 	}
+	// wasi
+	dir, _ := filepath.Split(s.opts.Filename)
+	filename := "sfn.yomo"
+	if s.opts.WASI {
+		filename = "sfn.wasm"
+	}
+	sl, _ := filepath.Abs(dir + filename)
+	s.output = sl
+	cmd = exec.Command("go", "build", "-o", sl, appPath)
+	// wasi
+	if s.opts.WASI {
+		tinygo, err := exec.LookPath("tinygo")
+		if err != nil {
+			return errors.New("[tinygo] command was not found. to build the wasm file, you need to install tinygo. For details, visit https://tinygo.org")
+		}
+		cmd = exec.Command(tinygo, "build", "-no-debug", "-target", "wasi", "-o", sl, appPath)
+	}
+	cmd.Env = env
+	cmd.Dir = s.tempDir
+	out, err = cmd.CombinedOutput()
+	if err != nil {
+		err = fmt.Errorf("Build: failure, %s %s", cmd.String(), out)
+		return err
+	}
+	// clean build
+	if clean {
+		file.Remove(s.tempDir)
+	}
+	log.SuccessStatusEvent(os.Stdout, "YoMo Stream Function build successful!")
 	return nil
 }
 
 // Run compiles and runs the serverless
 func (s *GolangServerless) Run(verbose bool) error {
-	log.InfoStatusEvent(os.Stdout, "Run: %s", s.target)
-	cmd := exec.Command(s.target)
-	if verbose {
-		cmd.Env = []string{"YOMO_LOG_LEVEL=debug"}
-	}
+	log.InfoStatusEvent(os.Stdout, "Run: %s", s.output)
+	dir := file.Dir(s.output)
+	cmd := exec.Command(s.output)
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = os.Stdout
+	cmd.Args = os.Args
+	cmd.Dir = dir
+	err := serverless.LoadEnvFile(dir)
+	if err != nil {
+		return err
+	}
+	env := os.Environ()
+	if verbose {
+		cmd.Env = append(env, "YOMO_LOG_LEVEL=debug")
+	}
+	cmd.Env = env
 	return cmd.Run()
 }
 
+// Executable returns true if the serverless is executable
 func (s *GolangServerless) Executable() bool {
-	return false
+	return true
 }
 
 func generateCode(fset *token.FileSet, file *ast.File) ([]byte, error) {
@@ -223,6 +241,41 @@ func generateCode(fset *token.FileSet, file *ast.File) ([]byte, error) {
 	}
 
 	return buffer.Bytes(), nil
+}
+
+type AppOpts struct {
+	WithInit         bool
+	WithWantedTarget bool
+	WithDescription  bool
+	WithInputSchema  bool
+}
+
+// ParseSrc parse app option from source code to run serverless
+func ParseSrc(appFile string) (*AppOpts, error) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, appFile, nil, parser.SkipObjectResolution)
+	if err != nil {
+		return nil, err
+	}
+
+	opts := &AppOpts{}
+
+	for _, v := range f.Decls {
+		if d, ok := v.(*ast.FuncDecl); ok {
+			switch d.Name.String() {
+			case "Init":
+				opts.WithInit = true
+			case "Description":
+				opts.WithDescription = true
+			case "InputSchema":
+				opts.WithInputSchema = true
+			case "WantedTarget":
+				opts.WithWantedTarget = true
+			}
+		}
+	}
+
+	return opts, nil
 }
 
 func init() {

@@ -8,7 +8,7 @@ import (
 	"strconv"
 
 	"github.com/yomorun/yomo"
-	"github.com/yomorun/yomo/core/frame"
+	"github.com/yomorun/yomo/serverless"
 )
 
 type NoiseData struct {
@@ -18,8 +18,8 @@ type NoiseData struct {
 }
 
 // Handler will handle the raw data.
-func Handler(data []byte) (frame.Tag, []byte) {
-	// var noise float32
+func Handler(ctx serverless.Context) {
+	data := ctx.Data()
 	var noise NoiseData
 	err := json.Unmarshal(data, &noise)
 	if err != nil {
@@ -27,22 +27,20 @@ func Handler(data []byte) (frame.Tag, []byte) {
 	} else {
 		log.Printf("%s >> [sink] save `%v` to FaunaDB\n", noise.From, noise.Noise)
 	}
-
-	return 0x0, nil
 }
 
 // DataTags observe tag list
-func DataTags() []frame.Tag {
-	return []frame.Tag{0x10}
+func DataTags() []uint32 {
+	return []uint32{0x10}
 }
 
 func main() {
 	addr := fmt.Sprintf("%s:%d", "localhost", getPort())
 	sfn := yomo.NewStreamFunction(
 		"MockDB",
-		yomo.WithZipperAddr(addr),
-		yomo.WithObserveDataTags(DataTags()...),
+		addr,
 	)
+	sfn.SetObserveDataTags(DataTags()...)
 	defer sfn.Close()
 
 	// set handler
@@ -60,7 +58,7 @@ func main() {
 		return
 	}
 
-	select {}
+	sfn.Wait()
 }
 
 func getPort() int {

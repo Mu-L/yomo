@@ -4,13 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"fmt"
+	"log"
 	"math"
 	"os"
 
 	"github.com/yomorun/yomo"
-	"github.com/yomorun/yomo/core/frame"
-	"github.com/yomorun/yomo/pkg/logger"
+	"github.com/yomorun/yomo/serverless"
 )
 
 // ThresholdSingleValue is the threshold of a single value.
@@ -18,11 +17,11 @@ const ThresholdSingleValue = 16
 
 // Print every value and alert for value greater than ThresholdSingleValue
 var computePeek = func(_ context.Context, value float32) (float32, error) {
-	fmt.Printf("✅ receive noise value: %f\n", value)
+	log.Printf("✅ receive noise value: %f\n", value)
 
 	// Compute peek value, if greater than ThresholdSingleValue, alert
 	if value >= ThresholdSingleValue {
-		fmt.Printf("❗ value: %f reaches the threshold %d! 𝚫=%f", value, ThresholdSingleValue, value-ThresholdSingleValue)
+		log.Printf("❗ value: %f reaches the threshold %d! 𝚫=%f", value, ThresholdSingleValue, value-ThresholdSingleValue)
 	}
 
 	return value, nil
@@ -31,33 +30,35 @@ var computePeek = func(_ context.Context, value float32) (float32, error) {
 // main will observe data with SeqID=0x14, and tranform to SeqID=0x15 with Noise value
 // to downstream sfn.
 func main() {
+	// sfn
 	sfn := yomo.NewStreamFunction(
 		"Noise-2",
-		yomo.WithZipperAddr("localhost:9000"),
-		yomo.WithObserveDataTags(0x14),
+		"localhost:9000",
 	)
+	sfn.SetObserveDataTags(0x14)
 	defer sfn.Close()
 
 	sfn.SetHandler(handler)
 
 	err := sfn.Connect()
 	if err != nil {
-		logger.Errorf("[fn2] connect err=%v", err)
+		log.Printf("[fn2] connect err=%v", err)
 		os.Exit(1)
 	}
 
-	select {}
+	sfn.Wait()
 }
 
-func handler(data []byte) (frame.Tag, []byte) {
+func handler(ctx serverless.Context) {
+	data := ctx.Data()
 	v := Float32frombytes(data)
 	result, err := computePeek(context.Background(), v)
 	if err != nil {
-		logger.Errorf("[fn2] computePeek err=%v", err)
-		return 0x0, nil
+		log.Printf("[fn2] computePeek err=%v", err)
+		return
 	}
 
-	return 0x15, float32ToByte(result)
+	ctx.Write(0x15, float32ToByte(result))
 }
 
 func Float32frombytes(bytes []byte) float32 {

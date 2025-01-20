@@ -3,14 +3,14 @@ package main
 import (
 	"context"
 	"encoding/binary"
+	"log"
 	"math"
 	"os"
 	"sync"
 	"time"
 
 	"github.com/yomorun/yomo"
-	"github.com/yomorun/yomo/core/frame"
-	"github.com/yomorun/yomo/pkg/logger"
+	"github.com/yomorun/yomo/serverless"
 )
 
 // ThresholdAverageValue is the threshold of the average value after a sliding window.
@@ -31,45 +31,45 @@ var slidingAvg = func(i interface{}) error {
 			total += value.(float32)
 		}
 		avg := total / float32(len(values))
-		logger.Printf("🧩 average value in last %d ms: %f!", SlidingWindowInMS, avg)
+		log.Printf("🧩 average value in last %d ms: %f!", SlidingWindowInMS, avg)
 		if avg >= ThresholdAverageValue {
-			logger.Printf("❗❗  average value in last %d ms: %f reaches the threshold %d!", SlidingWindowInMS, avg, ThresholdAverageValue)
+			log.Printf("❗❗  average value in last %d ms: %f reaches the threshold %d!", SlidingWindowInMS, avg, ThresholdAverageValue)
 		}
 	}
 	return nil
 }
 
-var (
-	observe = make(chan float32, 1)
-)
+var observe = make(chan float32, 1)
 
 func main() {
+	// sfn
 	sfn := yomo.NewStreamFunction(
 		"Noise-3",
-		yomo.WithZipperAddr("localhost:9000"),
-		yomo.WithObserveDataTags(0x15),
+		"localhost:9000",
 	)
+	sfn.SetObserveDataTags(0x15)
 	defer sfn.Close()
 
 	sfn.SetHandler(handler)
 
 	err := sfn.Connect()
 	if err != nil {
-		logger.Errorf("[fn3] connect err=%v", err)
+		log.Printf("[fn3] connect err=%v", err)
 		os.Exit(1)
 	}
 
 	go SlidingWindowWithTime(observe, SlidingWindowInMS, SlidingTimeInMS, slidingAvg)
 
-	select {}
+	sfn.Wait()
 }
 
-func handler(data []byte) (frame.Tag, []byte) {
+func handler(ctx serverless.Context) {
+	data := ctx.Data()
 	v := Float32frombytes(data)
-	logger.Printf("✅ [fn3] observe <- %v", v)
-	observe <- v
-
-	return 0x16, nil // no more processing, return nil
+	log.Printf("✅ [fn3] observe <- %v", v)
+	go func() {
+		observe <- v
+	}()
 }
 
 // Handler defines a function that handle the input value.
@@ -107,7 +107,7 @@ func SlidingWindowWithTime(observe <-chan float32, windowTimeInMS uint32, slideT
 			if len(availableItems) != 0 {
 				err := handler(availableItems)
 				if err != nil {
-					logger.Errorf("[fn3] SlidingWindowWithTime err=%v", err)
+					log.Printf("[fn3] SlidingWindowWithTime err=%v", err)
 					return
 				}
 			}

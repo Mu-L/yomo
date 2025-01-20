@@ -10,8 +10,7 @@ import (
 	"time"
 
 	"github.com/yomorun/yomo"
-	"github.com/yomorun/yomo/core/frame"
-	"github.com/yomorun/yomo/rx"
+	"github.com/yomorun/yomo/serverless"
 )
 
 // NoiseDataKey represents the Tag of a Y3 encoded data packet
@@ -24,43 +23,38 @@ type NoiseData struct {
 	From  string  `json:"from"`
 }
 
-var region = os.Getenv("REGION")
-
 var echo = func(_ context.Context, i interface{}) (interface{}, error) {
 	value := i.(*NoiseData)
 	rightNow := time.Now().UnixNano() / int64(time.Millisecond)
-	fmt.Println(fmt.Sprintf("%s %d > value: %f ⚡️=%dms", value.From, value.Time, value.Noise, rightNow-value.Time))
+	fmt.Printf("%s %d > value: %f ⚡️=%dms\n", value.From, value.Time, value.Noise, rightNow-value.Time)
 	value.Noise = value.Noise / 10
 	return value, nil
 }
 
-// Handler will handle data in Rx way
-func Handler(rxstream rx.Stream) rx.Stream {
-	log.Println("Handler is running...")
-	stream := rxstream.
-		Unmarshal(json.Unmarshal, func() interface{} { return &NoiseData{} }).
-		Debounce(50).
-		Map(echo).
-		Marshal(json.Marshal).
-		PipeBackToZipper(0x14)
+func Handler(ctx serverless.Context) {
+	data := ctx.Data()
+	log.Printf("✅ [fn] receive <- %v", string(data))
 
-	return stream
+	nd := &NoiseData{}
+	_ = json.Unmarshal(data, nd)
+
+	e, _ := echo(context.Background(), nd)
+
+	r, _ := json.Marshal(e)
+	ctx.Write(0x14, r)
 }
 
 func main() {
 	addr := fmt.Sprintf("%s:%d", "localhost", getPort())
 	sfn := yomo.NewStreamFunction(
 		"Noise",
-		yomo.WithZipperAddr(addr),
-		yomo.WithObserveDataTags(DataTags()...),
+		addr,
 	)
+	sfn.SetObserveDataTags(DataTags()...)
 	defer sfn.Close()
 
-	// create a Rx runtime.
-	rt := rx.NewRuntime(sfn)
-
 	// set handler
-	sfn.SetHandler(rt.RawByteHandler)
+	sfn.SetHandler(Handler)
 
 	// set error handler
 	sfn.SetErrorHandler(func(err error) {
@@ -74,15 +68,12 @@ func main() {
 		return
 	}
 
-	// pipe rx stream and rx handler.
-	rt.Pipe(Handler)
-
-	select {}
+	sfn.Wait()
 }
 
 // DataTags observe tag list
-func DataTags() []frame.Tag {
-	return []frame.Tag{0x10}
+func DataTags() []uint32 {
+	return []uint32{0x10}
 }
 
 func getPort() int {

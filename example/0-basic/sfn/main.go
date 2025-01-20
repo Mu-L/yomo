@@ -2,11 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"log/slog"
 	"os"
 
 	"github.com/yomorun/yomo"
-	"github.com/yomorun/yomo/core/frame"
-	"github.com/yomorun/yomo/pkg/logger"
+	"github.com/yomorun/yomo/serverless"
 )
 
 type noiseData struct {
@@ -22,9 +22,9 @@ func main() {
 	}
 	sfn := yomo.NewStreamFunction(
 		"Noise",
-		yomo.WithZipperAddr(addr),
-		yomo.WithObserveDataTags(0x33),
+		addr,
 	)
+	sfn.SetObserveDataTags(0x33)
 	defer sfn.Close()
 
 	// set handler
@@ -32,27 +32,24 @@ func main() {
 	// start
 	err := sfn.Connect()
 	if err != nil {
-		logger.Errorf("[sfn1] connect err=%v", err)
+		slog.Error("[sfn] connect", "err", err)
 		os.Exit(1)
 	}
 	// set the error handler function when server error occurs
 	sfn.SetErrorHandler(func(err error) {
-		logger.Errorf("[sfn1] receive server error: %v", err)
-		sfn.Close()
-		os.Exit(1)
+		slog.Error("[sfn] receive server error", "err", err)
 	})
 
-	select {}
+	sfn.Wait()
 }
 
-func handler(data []byte) (frame.Tag, []byte) {
+func handler(ctx serverless.Context) {
 	var model noiseData
-	err := json.Unmarshal(data, &model)
+	err := json.Unmarshal(ctx.Data(), &model)
 	if err != nil {
-		logger.Errorf("[sfn] json.Marshal err=%v", err)
+		slog.Error("[sfn] json.Marshal error", "err", err)
 		os.Exit(-2)
 	} else {
-		logger.Printf(">> [sfn] got tag=0x33, data=%+v", model)
+		slog.Info("[sfn]", "got", 0x33, "data", model)
 	}
-	return 0x0, nil
 }

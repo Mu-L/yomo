@@ -1,32 +1,33 @@
-extern "C" {
-    fn yomo_observe_datatag(tag: u32);
-    fn yomo_load_input(pointer: *mut u8);
-    fn yomo_dump_output(tag: u8, pointer: *const u8, length: usize);
+#[yomo::init]
+fn init() -> anyhow::Result<()> {
+    println!("wasm rust sfn init");
+    Ok(())
 }
 
-#[no_mangle]
-pub extern "C" fn yomo_init() {
-    unsafe {
-        yomo_observe_datatag(0x33);
-    }
+#[yomo::observe_datatags]
+fn observe_datatags() -> Vec<u32> {
+    vec![0x33]
 }
 
-#[no_mangle]
-pub extern "C" fn yomo_handler(input_length: usize) {
-    println!("wasm rust sfn received {} bytes", input_length);
+#[yomo::handler]
+fn handler(ctx: yomo::Context) -> anyhow::Result<()> {
+    // load input tag & data
+    let tag = ctx.get_tag();
+    let input = ctx.load_input();
+    println!(
+        "wasm rust sfn received {} bytes with tag[{:#x}]",
+        input.len(),
+        tag
+    );
 
-    // load input data
-    let mut input = Vec::with_capacity(input_length);
-    unsafe {
-        yomo_load_input(input.as_mut_ptr());
-        input.set_len(input_length);
-    }
+    // parse input from bytes
+    let input = String::from_utf8(input.to_vec())?;
 
-    // process app data
-    let output = input.to_ascii_uppercase();
+    // your app logic goes here
+    let output = input.to_uppercase();
 
-    // dump output data
-    unsafe {
-        yomo_dump_output(0x34, output.as_ptr(), output.len());
-    }
+    // return the datatag and output bytes
+    ctx.dump_output(0x34, output.into_bytes());
+
+    Ok(())
 }

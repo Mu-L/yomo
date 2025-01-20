@@ -1,11 +1,8 @@
 # https://taskfile.dev
 
-version: '3'
+version: "3"
 
 output: "prefixed"
-
-vars:
-  ExeName: yomo{{exeExt}}
 
 tasks:
   run:
@@ -19,39 +16,32 @@ tasks:
     desc: clean
     cmds:
       - rm -rf ./bin
-
-  build:
-    desc: build yomo cli tools
-    cmds:
-      - go build -v -o ./bin/{{.ExeName}} -ldflags "-s -w -X {{.Module}}/cli.Version={{.Version}} -X {{.Module}}/cli.Date={{.Date}}" ../../cmd/yomo/main.go
-    method: none
-    silent: true
+      - rm -rf ../uppercase/bin
 
   source:
     desc: run source
     deps: [source-build]
     cmds:
-      - "./bin/source{{exeExt}}"
+      - "../uppercase/bin/source{{exeExt}}"
     env:
       YOMO_LOG_LEVEL: error
 
   source-build:
     desc: build source
     cmds:
-      - "go build -o ./bin/source{{exeExt}} source/main.go"
+      - "go build -o ../uppercase/bin/source{{exeExt}} ../uppercase/source/main.go"
+    internal: true
 
   sfn:
     desc: run sfn
     dir: sfn
-    deps: [build]
     cmds:
-      - "../bin/yomo{{exeExt}} run sfn.wasm"
+      - "yomo run sfn.wasm"
 
   zipper:
     desc: run zipper
-    deps: [build]
     cmds:
-      - "./bin/yomo{{exeExt}} serve -c workflow.yaml"
+      - "yomo serve -c ../config.yaml"
     env:
       YOMO_LOG_LEVEL: error
       YOMO_ADDR: "localhost:9000"

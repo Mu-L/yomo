@@ -1,5 +1,5 @@
 /*
-Copyright © 2021 CELLA, Inc.
+Copyright © 2021 Allegro Networks
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -16,8 +16,10 @@ limitations under the License.
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/yomorun/yomo/cli/serverless/golang"
@@ -25,9 +27,7 @@ import (
 	"github.com/yomorun/yomo/pkg/log"
 )
 
-var (
-	name string
-)
+var name string
 
 // initCmd represents the init command
 var initCmd = &cobra.Command{
@@ -45,24 +45,33 @@ var initCmd = &cobra.Command{
 		}
 
 		log.PendingStatusEvent(os.Stdout, "Initializing the Stream Function...")
+		name = strings.ReplaceAll(name, " ", "_")
 		// create app.go
-		fname := filepath.Join(name, "app.go")
-		if err := file.PutContents(fname, golang.InitFuncTmpl); err != nil {
+		fname := filepath.Join(name, defaultSFNSourceFile)
+		contentTmpl := golang.InitTmpl
+		if err := file.PutContents(fname, contentTmpl); err != nil {
 			log.FailureStatusEvent(os.Stdout, "Write stream function into app.go file failure with the error: %v", err)
+			return
+		}
+
+		// create app_test.go
+		testName := filepath.Join(name, defaultSFNTestSourceFile)
+		if err := file.PutContents(testName, golang.InitTestTmpl); err != nil {
+			log.FailureStatusEvent(os.Stdout, "Write unittest tmpl into app_test.go file failure with the error: %v", err)
 			return
 		}
 
 		// create .env
 		fname = filepath.Join(name, ".env")
-		if err := file.PutContents(fname, []byte("YOMO_SFN_NAME=yomo-app-demo\n")); err != nil {
+		if err := file.PutContents(fname, []byte(fmt.Sprintf("YOMO_SFN_NAME=%s\nYOMO_SFN_ZIPPER=localhost:9000\n", name))); err != nil {
 			log.FailureStatusEvent(os.Stdout, "Write stream function .env file failure with the error: %v", err)
 			return
 		}
 
 		log.SuccessStatusEvent(os.Stdout, "Congratulations! You have initialized the stream function successfully.")
 		log.InfoStatusEvent(os.Stdout, "You can enjoy the YoMo Stream Function via the command: ")
-		log.InfoStatusEvent(os.Stdout, "\tDEV: \tcd %s && yomo dev", name)
-		log.InfoStatusEvent(os.Stdout, "\tPROD: \tFirst run source application, eg: go run example/source/main.go\r\n\t\tSecond: cd %s && yomo run", name)
+		log.InfoStatusEvent(os.Stdout, "\tStep 1: cd %s && yomo build", name)
+		log.InfoStatusEvent(os.Stdout, "\tStep 2: yomo run sfn.yomo")
 	},
 }
 

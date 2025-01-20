@@ -4,16 +4,25 @@ package wasm
 import (
 	"fmt"
 
-	"github.com/yomorun/yomo/core/frame"
+	"github.com/yomorun/yomo/serverless"
 )
 
 // Define wasm import/export function names
 const (
-	WasmFuncInit           = "yomo_init"
-	WasmFuncObserveDataTag = "yomo_observe_datatag"
-	WasmFuncLoadInput      = "yomo_load_input"
-	WasmFuncDumpOutput     = "yomo_dump_output"
-	WasmFuncHandler        = "yomo_handler"
+	WasmFuncStart = "_start"
+	WasmFuncInit  = "yomo_init"
+	// WasmFuncObserveDataTags guest module should implement this function
+	WasmFuncObserveDataTags = "yomo_observe_datatags"
+	// WasmFuncObserveDataTag host module should implement this function
+	WasmFuncObserveDataTag  = "yomo_observe_datatag"
+	WasmFuncGetWantedTarget = "yomo_get_wanted_target"
+	WasmFuncWantedTarget    = "yomo_wanted_target"
+	WasmFuncHandler         = "yomo_handler"
+	WasmFuncWrite           = "yomo_write"
+	WasmFuncWriteWithTarget = "yomo_write_with_target"
+	WasmFuncContextTag      = "yomo_context_tag"
+	WasmFuncContextData     = "yomo_context_data"
+	WasmFuncContextDataSize = "yomo_context_data_size"
 )
 
 // Runtime is the abstract interface for wasm runtime
@@ -22,10 +31,16 @@ type Runtime interface {
 	Init(wasmFile string) error
 
 	// GetObserveDataTags returns observed datatags of the wasm sfn
-	GetObserveDataTags() []frame.Tag
+	GetObserveDataTags() []uint32
+
+	// GetWantedTarget returns the wanted target of the wasm sfn
+	GetWantedTarget() string
+
+	// RunInit runs the init function of the wasm sfn
+	RunInit() error
 
 	// RunHandler runs the wasm application (request -> response mode)
-	RunHandler(data []byte) (frame.Tag, []byte, error)
+	RunHandler(ctx serverless.Context) error
 
 	// Close releases all the resources related to the runtime
 	Close() error
@@ -34,7 +49,9 @@ type Runtime interface {
 // NewRuntime returns a specific wasm runtime instance according to the type parameter
 func NewRuntime(runtimeType string) (Runtime, error) {
 	switch runtimeType {
-	case "", "wasmtime":
+	case "", "wazero":
+		return newWazeroRuntime()
+	case "wasmtime":
 		return newWasmtimeRuntime()
 	case "wasmedge":
 		return newWasmEdgeRuntime()

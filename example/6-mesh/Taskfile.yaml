@@ -1,8 +1,11 @@
 # https://taskfile.dev
 
-version: '3'
+version: "3"
 
 output: "prefixed"
+
+env:
+  YOMO_LOG_LEVEL: error
 
 vars:
   ExeName: yomo{{exeExt}}
@@ -19,8 +22,8 @@ tasks:
     desc: clean
     cmds:
       - rm -rf ./bin
-      - rm -rf ./stream-fn/stream-fn*
-      - rm -rf ./stream-fn-db/stream-fn-db*
+      - rm -rf ./stream-fn/bin
+      - rm -rf ./stream-fn-db/bin
 
   build:
     desc: build yomo cli tools
@@ -59,7 +62,7 @@ tasks:
     desc: "run zipper-sender-us"
     deps: [build]
     cmds:
-      - "./bin/{{.ExeName}} serve -c us/sender.yaml -m https://mesh-config.yomo.run/api/configs"
+      - "./bin/{{.ExeName}} serve -c us/sender.yaml"
     silent: false
 
   zipper-receiver-us:
@@ -73,7 +76,7 @@ tasks:
     desc: "run zipper-sender-eu"
     deps: [build]
     cmds:
-      - "./bin/{{.ExeName}} serve -c eu/sender.yaml -m https://mesh-config.yomo.run/api/configs"
+      - "./bin/{{.ExeName}} serve -c eu/sender.yaml"
     silent: false
 
   zipper-receiver-eu:
@@ -112,6 +115,7 @@ tasks:
       - "go build -o ./bin/source{{exeExt}} ./source/main.go"
       - echo "source built."
     silent: false
+    internal: true
 
   stream-fn-us:
     desc: run stream function
@@ -143,6 +147,7 @@ tasks:
     cmds:
       - "go build -o ./bin/stream-fn{{exeExt}} app.go"
     silent: false
+    internal: true
 
   stream-fn-db-us:
     desc: run output stream-fn-db
@@ -172,3 +177,4 @@ tasks:
     cmds:
       - "go build -o ./bin/stream-fn-db{{exeExt}} app.go"
     silent: false
+    internal: true

@@ -4,11 +4,11 @@ This example represents how YoMo works with multiple stream functions.
 
 ## Code structure
 
-- `source`: Mocking data of a Sound Sensor. [docs.yomo.run/source](https://docs.yomo.run/source)
-- `stream-fn-1`: Calculate the sound value in real-time. [docs.yomo.run/stream-function](https://docs.yomo.run/stream-fn)
-- `stream-fn-2`: Print the warning message when the noise value reaches the threshold. [docs.yomo.run/stream-function](https://docs.yomo.run/stream-fn)
-- `stream-fn-3`: The raw stream is immutable, `stream-fn-3` can still observe the raw data and calculate the average value in a sliding window. [docs.yomo.run/stream-function](https://docs.yomo.run/stream-fn)
-- `zipper`: Orchestrate a workflow that receives the data from `source`, stream computing in `stream-fn-1`, `stream-fn-2` and `stream-fn-3` [docs.yomo.run/zipper](https://docs.yomo.run/zipper)
+- `source`: Mocking data of a Sound Sensor. [docs.yomo.run/source](https://yomo.run/docs/api/source)
+- `stream-fn-1`: Calculate the sound value in real-time. [docs.yomo.run/stream-function](https://yomo.run/docs/api/sfn)
+- `stream-fn-2`: Print the warning message when the noise value reaches the threshold. [docs.yomo.run/stream-function](https://yomo.run/docs/api/sfn)
+- `stream-fn-3`: The raw stream is immutable, `stream-fn-3` can still observe the raw data and calculate the average value in a sliding window. [docs.yomo.run/stream-function](https://yomo.run/docs/api/sfn)
+- `zipper`: Orchestrate a workflow that receives the data from `source`, stream computing in `stream-fn-1`, `stream-fn-2` and `stream-fn-3` [docs.yomo.run/zipper](https://yomo.run/docs/cli/zipper)
 
 ## Prepare
 
@@ -17,7 +17,7 @@ Install YoMo CLI
 ### Binary (Recommended)
 
 ```bash
-$ curl -fsSL "https://bina.egoist.sh/yomorun/cli?name=yomo" | sh
+$ curl -fsSL https://get.yomo.run | sh
 
   ==> Resolved version latest to v1.0.0
   ==> Downloading asset for darwin amd64
@@ -28,7 +28,7 @@ $ curl -fsSL "https://bina.egoist.sh/yomorun/cli?name=yomo" | sh
 ### Or build from source
 
 ```bash
-$ go install github.com/yomorun/cli/yomo@latest
+$ go install github.com/yomorun/yomo/cmd/yomo@latest
 $ yomo version
 YoMo CLI Version: v1.0.0
 ```
@@ -40,12 +40,12 @@ YoMo CLI Version: v1.0.0
 ```bash
 $ task run
 
-task: [zipper] yomo serve -c ./zipper/workflow.yaml
+task: [zipper] yomo serve -c ../config.yaml
 task: [sfn-3] go build -o ./bin/sfn-3 ./stream-fn-3/app.go
 task: [source-build] go build -o ./bin/source source/main.go
 task: [sfn-1] go build -o ./bin/sfn-1 ./stream-fn-1/app.go
 task: [sfn-2] go build -o ./bin/sfn-2 ./stream-fn-2/app.go
-[zipper] Using config file: ./zipper/workflow.yaml
+[zipper] Using config file: ../config.yaml
 [zipper] ℹ️   Running YoMo-Zipper...
 [zipper] 2022-02-20 17:10:03.764	[yomo:zipper] Listening SIGUSR1, SIGUSR2, SIGTERM/SIGINT...
 [zipper] 2022-02-20 17:10:03.773	[core:server] ✅ [Service] Listening on: 127.0.0.1:9000, QUIC: [v1 draft-29], AUTH: [None]
@@ -85,10 +85,10 @@ task: [source] ./bin/source
 
 ## Option 2: Manual
 
-### Run [YoMo-Zipper](https://docs.yomo.run/zipper)
+### Run [YoMo-Zipper](https://yomo.run/docs/cli/zipper)
 
 ```bash
-yomo serve -c ./zipper/workflow.yaml
+yomo serve -c ../config.yaml
 
 ℹ️   Found 3 stream functions in YoMo-Zipper config
 ℹ️   Stream Function 1: Noise-1
@@ -97,7 +97,7 @@ yomo serve -c ./zipper/workflow.yaml
 ℹ️   Running YoMo Zipper...
 ```
 
-### Run [stream-fn-1](https://docs.yomo.run/stream-fn)
+### Run [stream-fn-1](https://yomo.run/docs/api/sfn)
 
 ```bash
 go run ./stream-fn-1/app.go
@@ -106,7 +106,7 @@ go run ./stream-fn-1/app.go
 2021/07/05 19:14:24 [core:client] ❤️  [Noise-1]([::]:64869) is connected to YoMo-Zipper localhost:9000
 ```
 
-### Run [stream-fn-2](https://docs.yomo.run/stream-fn)
+### Run [stream-fn-2](https://yomo.run/docs/api/sfn)
 
 ```bash
 go run ./stream-fn-2/app.go
@@ -115,7 +115,7 @@ go run ./stream-fn-2/app.go
 2021/07/05 19:14:24 [core:client] ❤️  [Noise-2]([::]:55565) is connected to YoMo-Zipper localhost:9000
 ```
 
-### Run [stream-fn-3](https://docs.yomo.run/stream-fn)
+### Run [stream-fn-3](https://yomo.run/docs/api/sfn)
 
 ```bash
 go run ./stream-fn-3/app.go
@@ -124,7 +124,7 @@ go run ./stream-fn-3/app.go
 2021/07/05 19:14:24 [core:client] ❤️  [Noise-3]([::]:50019) is connected to YoMo-Zipper localhost:9000
 ```
 
-### Run [yomo-source](https://docs.yomo.run/source)
+### Run [yomo-source](https://yomo.run/docs/api/source)
 
 ```bash
 go run ./source/main.go
